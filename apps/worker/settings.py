@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     WORKER_POLL_SECONDS: int = 300
     LAST_BLOCK_STATE_PATH: str = "state/last_block.json"
     DATA_OUT_DIR: str = "apps/worker/out"
-    LOG_LEVEL: str = "INFO"
+    LOG_LEVEL: str = "DEBUG"  # Changed to DEBUG to see event signatures
     WINDOW_MINUTES: int = 5
     MAX_ROWS_PER_ROTATION: int = 1000
     PREVIEW_ROWS: int = 5

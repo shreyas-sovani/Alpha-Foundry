@@ -20,7 +20,8 @@ class BlockscoutRESTClient:
     def __init__(self, api_base_url: str, chain_id: int, timeout: float = 30.0):
         self.api_base_url = api_base_url.rstrip("/")
         self.chain_id = chain_id
-        self.client = httpx.AsyncClient(timeout=timeout)
+        self.timeout = timeout
+        self._client = None  # Lazy initialization per event loop
         self.available_tools = [
             "get_latest_block",
             "get_transactions_by_address",
@@ -31,6 +32,19 @@ class BlockscoutRESTClient:
             "get_transactions_by_address": "get_transactions_by_address",
             "get_logs": "get_logs",
         }
+    
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """Get or create httpx client for current event loop."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
+    
+    async def close(self):
+        """Close the httpx client."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
     
     async def init_session(self) -> List[str]:
         """Initialize session (no-op for REST API)."""

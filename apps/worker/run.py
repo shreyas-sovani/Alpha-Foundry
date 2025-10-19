@@ -16,7 +16,7 @@ except ImportError:
 from dotenv import load_dotenv
 
 from settings import Settings
-from blockscout_client import MCPClient, get_mcp_client_from_env, MCPError
+from blockscout_rest import BlockscoutRESTClient, get_rest_client_from_env
 from transform import normalize_tx, normalize_log_to_swap, compute_price_delta
 from state import read_state, write_state, DedupeTracker
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 async def fetch_and_process_logs(
-    client: MCPClient,
+    client: BlockscoutRESTClient,
     pool_addresses: List[str],
     from_block: int,
     to_block: int,
@@ -81,6 +81,12 @@ async def fetch_and_process_logs(
                 
                 # Transform each log
                 for log in logs:
+                    # IMPORTANT: Filter by block range since API doesn't support it
+                    block_number = log.get("block_number")
+                    if block_number is not None:
+                        if block_number < from_block or block_number > to_block:
+                            continue
+                    
                     tx_hash = log.get("transaction_hash") or log.get("transactionHash") or ""
                     log_index = log.get("log_index") or log.get("logIndex") or 0
                     
@@ -96,13 +102,21 @@ async def fetch_and_process_logs(
                 
                 logger.debug(f"  Processed {len(logs)} logs, produced {len(all_rows)} rows so far")
                 
+                # Check if we've gone past the from_block (logs come newest-first)
+                # Stop pagination if all logs in this page are older than from_block
+                if logs:
+                    oldest_in_page = min(log.get("block_number", float('inf')) for log in logs)
+                    if oldest_in_page < from_block:
+                        logger.debug(f"  Reached block {oldest_in_page}, stopping pagination (from_block={from_block})")
+                        break
+                
                 # Check for more pages
                 if not next_cursor:
                     break
                 
                 cursor = next_cursor
             
-            except MCPError as e:
+            except Exception as e:
                 logger.error(f"MCP error fetching logs: {e}")
                 break
             except NotImplementedError as e:
@@ -118,7 +132,7 @@ async def fetch_and_process_logs(
 
 
 async def fetch_and_process_transactions(
-    client: MCPClient,
+    client: BlockscoutRESTClient,
     pool_addresses: List[str],
     age_from: int,
     age_to: int,
@@ -194,7 +208,7 @@ async def fetch_and_process_transactions(
                 
                 cursor = next_cursor
             
-            except MCPError as e:
+            except Exception as e:
                 logger.error(f"MCP error fetching transactions: {e}")
                 break
             except Exception as e:
@@ -306,7 +320,7 @@ def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) 
             json.dump(preview, f, indent=2)
 
 
-async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any], dedupe: DedupeTracker) -> Dict[str, Any]:
+async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dict[str, Any], dedupe: DedupeTracker) -> Dict[str, Any]:
     """
     Run one ingestion cycle with logs-first path.
     
@@ -324,13 +338,13 @@ async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any]
         latest_block = latest["number"]
         latest_timestamp = latest["timestamp"]
         logger.info(f"Latest block: {latest_block} (timestamp: {latest_timestamp})")
-    except MCPError as e:
+    except Exception as e:
         logger.error(f"Failed to get latest block: {e}")
         logger.warning("Skipping this cycle")
         return state
     
     # Determine block range
-    last_block = state.get("last_block", latest_block - 1000)  # Default: last 1000 blocks
+    last_block = state.get("last_block", latest_block - 50)  # Default: last 50 blocks
     from_block = last_block + 1
     to_block = latest_block
     
@@ -453,8 +467,17 @@ def main():
     
     # Initialize MCP client
     try:
-        client = get_mcp_client_from_env(settings)
-        logger.info("✓ MCP client initialized")
+        client = get_rest_client_from_env(settings)
+        logger.info("✓ MCP client created")
+        
+        # Initialize session in async context
+        if settings.MCP_INIT_ON_START:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(client.init_session())
+            finally:
+                loop.close()
         
         # Print discovered tools
         if client.available_tools:

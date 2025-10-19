@@ -453,13 +453,13 @@ class MCPClient:
 
 def get_mcp_client_from_env(settings) -> MCPClient:
     """
-    Factory function to create and initialize MCP client from settings.
+    Factory function to create MCP client from settings.
     
     Args:
         settings: Settings instance
     
     Returns:
-        Initialized MCPClient
+        MCPClient (not yet initialized - call init_session in async context)
     
     Reference: https://docs.blockscout.com/devs/mcp-server
     """
@@ -467,14 +467,5 @@ def get_mcp_client_from_env(settings) -> MCPClient:
         base_url=settings.BLOCKSCOUT_MCP_BASE,
         chain_id=settings.CHAIN_ID
     )
-    
-    if settings.MCP_INIT_ON_START:
-        # Run init in sync context
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(client.init_session())
-        finally:
-            loop.close()
     
     return client

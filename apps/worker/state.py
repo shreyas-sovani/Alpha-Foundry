@@ -41,12 +41,14 @@ def read_state(path: str) -> Dict[str, Any]:
 
 def write_state(path: str, obj: Dict[str, Any]) -> None:
     """
-    Write state to JSON file using orjson for speed.
+    Write state to JSON file using orjson for speed with fsync for safety.
     
     Args:
         path: Path to state file
         obj: State dict to persist
     """
+    import os
+    
     path_obj = Path(path)
     
     # Ensure parent directory exists
@@ -58,6 +60,10 @@ def write_state(path: str, obj: Dict[str, Any]) -> None:
                 f.write(orjson.dumps(obj, option=orjson.OPT_INDENT_2))
             else:
                 json.dump(obj, f, indent=2)
+            
+            # Flush and fsync for crash safety
+            f.flush()
+            os.fsync(f.fileno())
     except IOError as e:
         logger.error(f"Failed to write state to {path}: {e}")
         raise

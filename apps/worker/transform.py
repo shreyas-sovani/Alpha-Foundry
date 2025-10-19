@@ -11,6 +11,56 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+def extract_pool_tokens(pool_address: str, dex_type: str, client) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extract token0 and token1 addresses from a DEX pool.
+    
+    Args:
+        pool_address: Pool contract address
+        dex_type: DEX type ("v2" or "v3")
+        client: Blockscout REST client
+    
+    Returns:
+        (token0_address, token1_address) or (None, None) if unavailable
+    
+    Note: For now, this is a stub that returns None. Full implementation
+    would query the pool contract via Blockscout's smart contract read API
+    or use eth_call to invoke token0() and token1() view functions.
+    
+    Workaround: Configure TOKEN0/TOKEN1 in settings and manually set pool_tokens
+    cache in state, or use the pool address directly if tokens are known.
+    """
+    # Stub implementation - return None to skip pool token resolution
+    # This prevents errors while we wait for full eth_call integration
+    logger.debug(f"Pool token resolution not yet implemented for {pool_address[:8]}...")
+    return (None, None)
+
+
+def normalize_amounts(raw_in: str, raw_out: str, decimals_in: int, decimals_out: int) -> Tuple[str, str]:
+    """
+    Normalize raw amounts using token decimals.
+    
+    Args:
+        raw_in: Raw input amount (wei)
+        raw_out: Raw output amount (wei)
+        decimals_in: Input token decimals
+        decimals_out: Output token decimals
+    
+    Returns:
+        (normalized_in, normalized_out) as strings with 18 decimal places
+    """
+    try:
+        amt_in = Decimal(str(raw_in)) / Decimal(10 ** decimals_in)
+        amt_out = Decimal(str(raw_out)) / Decimal(10 ** decimals_out)
+        
+        # Return with consistent precision
+        return (f"{amt_in:.18f}", f"{amt_out:.18f}")
+    
+    except (InvalidOperation, ValueError):
+        return ("0", "0")
+
+
 # Common DEX swap event signatures
 SWAP_EVENT_SIGNATURES = {
     # Uniswap V2 Swap(address,uint256,uint256,uint256,uint256,address)
@@ -292,17 +342,25 @@ def decode_swap_event(log: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
 
-def normalize_log_to_swap(log: Dict[str, Any], autoscout_base: str, token_decimals: Dict[str, int]) -> Optional[Dict[str, Any]]:
+async def normalize_log_to_swap(
+    log: Dict[str, Any],
+    autoscout_base: str,
+    pool_tokens: Dict[str, Tuple[str, str]],
+    client,
+    block_number: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
     """
     Normalize a log entry to a swap row if it's a swap event.
     
     Args:
         log: Raw log entry
         autoscout_base: Autoscout base URL
-        token_decimals: Cache of token address -> decimals
+        pool_tokens: Cache of pool_address -> (token0, token1)
+        client: Blockscout REST client for metadata lookups
+        block_number: Optional block number override
     
     Returns:
-        Normalized swap row or None
+        Normalized swap row with real token addresses, symbols, decimals, or None
     """
     decoded = decode_swap_event(log)
     if not decoded:
@@ -312,7 +370,15 @@ def normalize_log_to_swap(log: Dict[str, Any], autoscout_base: str, token_decima
     tx_hash = log.get("transaction_hash") or log.get("transactionHash") or ""
     log_index = log.get("log_index") or log.get("logIndex") or 0
     timestamp = log.get("timestamp") or log.get("block_timestamp") or 0
-    pool_id = log.get("address") or ""
+    
+    # Handle address field (may be string or dict with "hash" field)
+    address_field = log.get("address") or {}
+    if isinstance(address_field, dict):
+        pool_id = address_field.get("hash", "")
+    else:
+        pool_id = address_field
+    
+    block_num = block_number or log.get("block_number") or log.get("blockNumber") or 0
     
     if isinstance(timestamp, str):
         try:
@@ -325,18 +391,29 @@ def normalize_log_to_swap(log: Dict[str, Any], autoscout_base: str, token_decima
         except:
             timestamp = 0
     
+    # Resolve pool tokens if not cached
+    if pool_id not in pool_tokens:
+        token0, token1 = extract_pool_tokens(pool_id, "v2", client)
+        if token0 and token1:
+            pool_tokens[pool_id] = (token0, token1)
+        else:
+            logger.warning(f"Cannot resolve tokens for pool {pool_id[:8]}...")
+            return None
+    
+    token0, token1 = pool_tokens[pool_id]
+    
     # Parse swap event based on signature
     values = decoded["values"]
     
     # For Uniswap V2: (sender, amount0In, amount1In, amount0Out, amount1Out, to)
     # Determine which direction the swap went
-    token_in = None
-    token_out = None
+    token_in_addr = None
+    token_out_addr = None
     amount_in = "0"
     amount_out = "0"
     
     if len(values) >= 5:
-        # Simplified: check which amounts are non-zero
+        # Check which amounts are non-zero
         amount0_in = int(values[1]) if len(values) > 1 and values[1] else 0
         amount1_in = int(values[2]) if len(values) > 2 and values[2] else 0
         amount0_out = int(values[3]) if len(values) > 3 and values[3] else 0
@@ -346,31 +423,64 @@ def normalize_log_to_swap(log: Dict[str, Any], autoscout_base: str, token_decima
             # Swapping token0 for token1
             amount_in = str(amount0_in)
             amount_out = str(amount1_out)
-            # Would need pool metadata to determine actual token addresses
-            token_in = "token0"
-            token_out = "token1"
+            token_in_addr = token0
+            token_out_addr = token1
         elif amount1_in > 0 and amount0_out > 0:
             # Swapping token1 for token0
             amount_in = str(amount1_in)
             amount_out = str(amount0_out)
-            token_in = "token1"
-            token_out = "token0"
+            token_in_addr = token1
+            token_out_addr = token0
     
-    # Compute normalized price if decimals available
-    decimals_in = token_decimals.get(token_in, 18) if token_in else 18
-    decimals_out = token_decimals.get(token_out, 18) if token_out else 18
+    if not token_in_addr or not token_out_addr:
+        logger.warning(f"Cannot determine swap direction for tx {tx_hash[:8]}...")
+        return None
+    
+    # Fetch token metadata
+    try:
+        decimals_in = await client.get_erc20_decimals(token_in_addr)
+        decimals_out = await client.get_erc20_decimals(token_out_addr)
+        symbol_in = await client.get_erc20_symbol(token_in_addr)
+        symbol_out = await client.get_erc20_symbol(token_out_addr)
+    except Exception as e:
+        logger.warning(f"Failed to fetch token metadata: {e}")
+        decimals_in = 18
+        decimals_out = 18
+        symbol_in = "UNKNOWN"
+        symbol_out = "UNKNOWN"
+    
+    # Normalize amounts
+    norm_in, norm_out = normalize_amounts(amount_in, amount_out, decimals_in, decimals_out)
+    
+    # Compute normalized price
     normalized_price = compute_normalized_price(amount_in, amount_out, decimals_in, decimals_out)
+    
+    # Fetch block timestamp if missing
+    if timestamp == 0 and block_num > 0:
+        try:
+            block_info = await client.get_block_info(block_num)
+            if block_info:
+                timestamp = block_info.get("timestamp", 0)
+        except Exception as e:
+            logger.debug(f"Could not fetch timestamp for block {block_num}: {e}")
     
     explorer_link = f"{autoscout_base.rstrip('/')}/tx/{tx_hash}"
     
     return {
         "timestamp": int(timestamp),
+        "block_number": int(block_num),
         "tx_hash": tx_hash,
         "log_index": int(log_index),
-        "token_in": token_in or "0x0",
-        "token_out": token_out or "0x0",
+        "token_in": token_in_addr,
+        "token_in_symbol": symbol_in,
+        "token_out": token_out_addr,
+        "token_out_symbol": symbol_out,
         "amount_in": amount_in,
         "amount_out": amount_out,
+        "amount_in_normalized": norm_in,
+        "amount_out_normalized": norm_out,
+        "decimals_in": decimals_in,
+        "decimals_out": decimals_out,
         "pool_id": pool_id,
         "normalized_price": normalized_price,
         "delta_vs_other_pool": None,

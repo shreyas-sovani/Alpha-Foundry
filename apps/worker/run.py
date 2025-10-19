@@ -41,10 +41,13 @@ async def fetch_and_process_logs(
     from_block: int,
     to_block: int,
     autoscout_base: str,
-    dedupe: DedupeTracker
+    dedupe: DedupeTracker,
+    pool_tokens: Dict[str, Any],
+    early_stop_watermark: int = 0,
+    early_stop_mode: str = "block"
 ) -> List[Dict[str, Any]]:
     """
-    Fetch logs (events) for pool addresses - LOGS-FIRST PATH.
+    Fetch logs (events) for pool addresses - LOGS-FIRST PATH with early-stop guards.
     
     Args:
         client: MCP client
@@ -53,12 +56,14 @@ async def fetch_and_process_logs(
         to_block: Ending block
         autoscout_base: Autoscout explorer base URL
         dedupe: Deduplication tracker
+        pool_tokens: Cache of pool_address -> (token0, token1)
+        early_stop_watermark: Stop pagination when logs older than this (block or timestamp)
+        early_stop_mode: "block" or "timestamp"
     
     Returns:
         List of normalized swap rows
     """
     all_rows = []
-    token_decimals = {}  # Cache for token decimals
     
     for address in pool_addresses:
         logger.info(f"Fetching logs for {address[:10]}... (blocks {from_block}-{to_block})")
@@ -116,25 +121,37 @@ async def fetch_and_process_logs(
                         logger.debug(f"Skipping duplicate: {tx_hash}:{log_index}")
                         continue
                     
-                    row = normalize_log_to_swap(log, autoscout_base, token_decimals)
-                    if row:
-                        all_rows.append(row)
-                        dedupe.mark_seen(tx_hash, log_index)
-                    else:
-                        # Debug: log why normalization failed
-                        topic0 = log.get("topics", [])[0] if log.get("topics") else "NO_TOPICS"
-                        logger.info(f"  Failed to normalize log with topic0={topic0}")
+                    # Get block number for timestamp lookup and early-stop check
+                    block_num = log.get("block_number") or log.get("blockNumber") or 0
+                    
+                    try:
+                        row = await normalize_log_to_swap(log, autoscout_base, pool_tokens, client, block_num)
+                        if row:
+                            all_rows.append(row)
+                            dedupe.mark_seen(tx_hash, log_index)
+                        else:
+                            # Debug: log why normalization failed
+                            topic0 = log.get("topics", [])[0] if log.get("topics") else "NO_TOPICS"
+                            logger.debug(f"  Failed to normalize log with topic0={topic0}")
+                    except Exception as e:
+                        logger.error(f"  Error normalizing log {tx_hash}:{log_index}: {e}", exc_info=True)
+                        continue
                 
                 logger.info(f"  Block range {from_block}-{to_block}: {logs_before_filter} total logs, {logs_after_block_filter} in range, {len(all_rows)} normalized")
                 logger.debug(f"  Processed {len(logs)} logs, produced {len(all_rows)} rows so far")
                 
-                # Check if we've gone past the from_block (logs come newest-first)
-                # Stop pagination if all logs in this page are older than from_block
-                if logs:
-                    oldest_in_page = min(log.get("block_number", float('inf')) for log in logs)
-                    if oldest_in_page < from_block:
-                        logger.debug(f"  Reached block {oldest_in_page}, stopping pagination (from_block={from_block})")
-                        break
+                # Early-stop guard: Check if we've reached the watermark
+                if logs and early_stop_watermark > 0:
+                    if early_stop_mode == "block":
+                        oldest_in_page = min(log.get("block_number", float('inf')) for log in logs)
+                        if oldest_in_page <= early_stop_watermark:
+                            logger.info(f"  Early-stop: Reached block {oldest_in_page} <= watermark {early_stop_watermark}")
+                            break
+                    elif early_stop_mode == "timestamp":
+                        oldest_ts = min(log.get("timestamp", float('inf')) for log in logs)
+                        if oldest_ts <= early_stop_watermark:
+                            logger.info(f"  Early-stop: Reached timestamp {oldest_ts} <= watermark {early_stop_watermark}")
+                            break
                 
                 # Check for more pages
                 if not next_cursor:
@@ -287,17 +304,30 @@ def rotate_jsonl_if_needed(file_path: Path, max_rows: int) -> bool:
 
 def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "1.0") -> None:
     """Update metadata.json with latest stats and schema version."""
+    
+    # Schema 1.1 fields include enriched token metadata
+    if schema_version == "1.1":
+        fields = [
+            "timestamp", "block_number", "tx_hash", "log_index",
+            "token_in", "token_in_symbol", "token_out", "token_out_symbol",
+            "amount_in", "amount_out", "amount_in_normalized", "amount_out_normalized",
+            "decimals_in", "decimals_out", "pool_id", "normalized_price",
+            "delta_vs_other_pool", "explorer_link"
+        ]
+    else:
+        fields = [
+            "timestamp", "tx_hash", "log_index", "token_in", "token_out",
+            "amount_in", "amount_out", "pool_id", "normalized_price",
+            "delta_vs_other_pool", "explorer_link"
+        ]
+    
     metadata = {
         "schema_version": schema_version,
         "last_updated": datetime.utcnow().isoformat() + "Z",
         "rows": row_count,
         "latest_cid": None,  # TODO: Integrate with Lighthouse/1MB DataCoin
         "format": "jsonl",
-        "fields": [
-            "timestamp", "tx_hash", "log_index", "token_in", "token_out",
-            "amount_in", "amount_out", "pool_id", "normalized_price",
-            "delta_vs_other_pool", "explorer_link"
-        ]
+        "fields": fields
     }
     
     with open(metadata_path, "w") as f:
@@ -348,15 +378,17 @@ def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) 
 
 async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dict[str, Any], dedupe: DedupeTracker) -> Dict[str, Any]:
     """
-    Run one ingestion cycle with logs-first path.
+    Run one ingestion cycle with logs-first path, pool resolution, and early-stop guards.
     
     Returns:
         Updated state dict
     """
+    from transform import extract_pool_tokens
+    
     data_out_dir = Path(settings.DATA_OUT_DIR)
     jsonl_path = data_out_dir / "dexarb_latest.jsonl"
     metadata_path = data_out_dir / "metadata.json"
-    preview_path = data_out_dir / "preview.json"
+    preview_path = data_out_dir / settings.PREVIEW_PATH.split("/")[-1]
     
     # Get latest block
     try:
@@ -370,18 +402,50 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
         return state
     
     # Determine block range
-    last_block = state.get("last_block", latest_block - 50)  # Default: last 50 blocks
+    last_block = state.get("last_block", latest_block - settings.LOOKBACK_BLOCKS)
     from_block = last_block + 1
     to_block = latest_block
     
-    # Collect pool addresses
+    # Pool resolution: Use POOL_A/B if set, else resolve from TOKEN0/TOKEN1
     pool_addresses = []
     if settings.DEX_POOL_A:
         pool_addresses.append(settings.DEX_POOL_A)
     if settings.DEX_POOL_B:
         pool_addresses.append(settings.DEX_POOL_B)
     
+    # If no pools but have tokens, resolve pool from factory (simplified for V2)
+    # NOTE: Full implementation would query factory.getPair(token0, token1)
+    if not pool_addresses and settings.TOKEN0 and settings.TOKEN1:
+        logger.info(f"No pools configured, TOKEN0/TOKEN1 resolution not yet implemented")
+        logger.info(f"  TOKEN0: {settings.TOKEN0}")
+        logger.info(f"  TOKEN1: {settings.TOKEN1}")
+    
     logger.info(f"Monitoring {len(pool_addresses)} pool(s): {[p[:10]+'...' for p in pool_addresses]}")
+    
+    # Initialize pool tokens cache
+    pool_tokens = state.get("pool_tokens", {})
+    
+    # Manual pool token configuration (workaround until eth_call is implemented)
+    # For Uniswap V2 pair 0x9Ae18109692b43e95Ae6BE5350A5Acc5211FE9a1 on Sepolia:
+    # This is a WETH/UNI pair based on the Swap events we've seen
+    if "0x9Ae18109692b43e95Ae6BE5350A5Acc5211FE9a1" not in pool_tokens:
+        # Placeholder tokens - these should be resolved from the pool contract
+        # For now, using generic addresses as placeholders
+        pool_tokens["0x9Ae18109692b43e95Ae6BE5350A5Acc5211FE9a1"] = (
+            "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9",  # WETH on Sepolia (token0)
+            "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"   # UNI on Sepolia (token1)
+        )
+        logger.info(f"Using manual pool token configuration for 0x9Ae18109...")
+    
+    
+    # Calculate early-stop watermark
+    early_stop_watermark = 0
+    if settings.EARLY_STOP_MODE == "block":
+        early_stop_watermark = max(0, latest_block - settings.EARLY_STOP_LOOKBACK_BLOCKS)
+    elif settings.EARLY_STOP_MODE == "timestamp":
+        early_stop_watermark = max(0, int(time.time()) - settings.EARLY_STOP_LOOKBACK_SECS)
+    
+    logger.info(f"Early-stop watermark ({settings.EARLY_STOP_MODE}): {early_stop_watermark}")
     
     # Try logs-first path if available
     rows = []
@@ -395,8 +459,11 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
                 pool_addresses=pool_addresses,
                 from_block=from_block,
                 to_block=to_block,
-                autoscout_base=settings.AUTOSCOUT_BASE,
-                dedupe=dedupe
+                autoscout_base=settings.AUTOSCOUT_BASE or "https://eth-sepolia.blockscout.com",
+                dedupe=dedupe,
+                pool_tokens=pool_tokens,
+                early_stop_watermark=early_stop_watermark,
+                early_stop_mode=settings.EARLY_STOP_MODE
             )
             used_logs_path = True
         except NotImplementedError:
@@ -428,6 +495,31 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
     
     logger.info(f"✓ Produced {len(rows)} normalized rows (deduped)")
     
+    # Compute cross-pool price deltas if both pools have data
+    if len(pool_addresses) == 2:
+        pool_a_rows = [r for r in rows if r.get("pool_id") == pool_addresses[0]]
+        pool_b_rows = [r for r in rows if r.get("pool_id") == pool_addresses[1]]
+        
+        if pool_a_rows and pool_b_rows:
+            logger.info(f"Computing cross-pool deltas: {len(pool_a_rows)} vs {len(pool_b_rows)} swaps")
+            
+            # Simple approach: Match by timestamp within tolerance (e.g., same block)
+            # In production, use time-weighted matching or block windows
+            for row_a in pool_a_rows:
+                for row_b in pool_b_rows:
+                    # Match if within same block or close timestamp
+                    block_match = row_a.get("block_number") == row_b.get("block_number")
+                    time_match = abs(row_a.get("timestamp", 0) - row_b.get("timestamp", 0)) < 60
+                    
+                    if block_match or time_match:
+                        price_a = row_a.get("normalized_price")
+                        price_b = row_b.get("normalized_price")
+                        
+                        if price_a and price_b:
+                            delta = compute_price_delta(price_a, price_b)
+                            row_a["delta_vs_other_pool"] = delta
+                            row_b["delta_vs_other_pool"] = -delta  # Inverse for pool B
+    
     # Append to JSONL
     if rows:
         append_jsonl(jsonl_path, rows)
@@ -438,7 +530,7 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
     
     # Update metadata
     total_rows = count_jsonl_rows(jsonl_path)
-    update_metadata(metadata_path, total_rows, schema_version="1.0")
+    update_metadata(metadata_path, total_rows, schema_version=settings.SCHEMA_VERSION)
     logger.info(f"✓ Updated metadata: {total_rows} rows")
     
     # Update preview for Hosted Agent
@@ -450,7 +542,8 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
         "last_seen_timestamp": int(time.time()),
         "last_block": to_block,
         "last_updated": datetime.utcnow().isoformat() + "Z",
-        "used_logs_path": used_logs_path
+        "used_logs_path": used_logs_path,
+        "pool_tokens": pool_tokens  # Persist pool token cache
     }
     
     # Print cycle summary

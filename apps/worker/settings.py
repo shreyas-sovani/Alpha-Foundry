@@ -1,25 +1,47 @@
 """Settings loader using Pydantic BaseSettings."""
 import sys
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, Literal
 
 
 class Settings(BaseSettings):
     """Worker configuration loaded from environment variables."""
     
+    # API & Network
     BLOCKSCOUT_MCP_BASE: str
-    AUTOSCOUT_BASE: str
+    AUTOSCOUT_BASE: Optional[str] = ""
     CHAIN_ID: int
-    DEX_POOL_A: str
-    DEX_POOL_B: str
+    
+    # DEX Configuration
+    DEX_TYPE: Literal["v2", "v3"] = "v2"
+    DEX_POOL_A: Optional[str] = ""
+    DEX_POOL_B: Optional[str] = ""
+    TOKEN0: Optional[str] = ""
+    TOKEN1: Optional[str] = ""
+    
+    # Worker Behavior
     WORKER_POLL_SECONDS: int = 300
-    LAST_BLOCK_STATE_PATH: str = "state/last_block.json"
-    DATA_OUT_DIR: str = "apps/worker/out"
-    LOG_LEVEL: str = "DEBUG"  # Changed to DEBUG to see event signatures
     WINDOW_MINUTES: int = 5
     MAX_ROWS_PER_ROTATION: int = 1000
     PREVIEW_ROWS: int = 5
+    LOG_LEVEL: str = "INFO"
     MCP_INIT_ON_START: bool = True
+    
+    # Block range and early-stop controls
+    LOOKBACK_BLOCKS: int = 50  # Default block range for initial sync
+    EARLY_STOP_MODE: Literal["block", "timestamp"] = "block"
+    EARLY_STOP_LOOKBACK_BLOCKS: int = 5000
+    EARLY_STOP_LOOKBACK_SECS: int = 1800
+    
+    # State & Cache Paths
+    LAST_BLOCK_STATE_PATH: str = "state/last_block.json"
+    DECIMALS_CACHE_PATH: str = "state/erc20_decimals.json"
+    BLOCK_TS_CACHE_PATH: str = "state/block_ts.json"
+    DATA_OUT_DIR: str = "apps/worker/out"
+    PREVIEW_PATH: str = "apps/worker/out/preview.json"
+    
+    # Schema
+    SCHEMA_VERSION: str = "1.1"
     
     class Config:
         env_file = ".env"
@@ -30,16 +52,20 @@ class Settings(BaseSettings):
         errors = []
         
         if not self.BLOCKSCOUT_MCP_BASE:
-            errors.append("BLOCKSCOUT_MCP_BASE is required (e.g., https://mcp.blockscout.com)")
-        
-        if not self.AUTOSCOUT_BASE:
-            errors.append("AUTOSCOUT_BASE is required (your Autoscout explorer URL)")
+            errors.append("BLOCKSCOUT_MCP_BASE is required (e.g., https://eth-sepolia.blockscout.com/api/v2)")
         
         if not self.CHAIN_ID or self.CHAIN_ID <= 0:
             errors.append("CHAIN_ID is required and must be a positive integer (e.g., 11155111 for Sepolia)")
         
-        if not self.DEX_POOL_A and not self.DEX_POOL_B:
-            errors.append("At least one pool address (DEX_POOL_A or DEX_POOL_B) must be set")
+        # Validate pool configuration
+        has_pools = self.DEX_POOL_A and self.DEX_POOL_B
+        has_tokens = self.TOKEN0 and self.TOKEN1
+        
+        if not has_pools and not has_tokens:
+            errors.append("Either (DEX_POOL_A + DEX_POOL_B) or (TOKEN0 + TOKEN1) must be set for pool resolution")
+        
+        if self.DEX_TYPE not in ["v2", "v3"]:
+            errors.append("DEX_TYPE must be 'v2' or 'v3'")
         
         if errors:
             print("=" * 60)
@@ -55,20 +81,25 @@ class Settings(BaseSettings):
     def print_redacted(self):
         """Print configuration with sensitive values redacted."""
         print("=" * 60)
-        print("Worker Configuration (redacted):")
+        print(f"Worker Configuration v{self.SCHEMA_VERSION}:")
         print(f"  BLOCKSCOUT_MCP_BASE: {self._redact_url(self.BLOCKSCOUT_MCP_BASE)}")
-        print(f"  AUTOSCOUT_BASE: {self._redact_url(self.AUTOSCOUT_BASE)}")
+        print(f"  AUTOSCOUT_BASE: {self._redact_url(self.AUTOSCOUT_BASE) if self.AUTOSCOUT_BASE else '[NOT SET]'}")
         print(f"  CHAIN_ID: {self.CHAIN_ID}")
-        print(f"  DEX_POOL_A: {self._redact_address(self.DEX_POOL_A)}")
-        print(f"  DEX_POOL_B: {self._redact_address(self.DEX_POOL_B)}")
+        print(f"  DEX_TYPE: {self.DEX_TYPE}")
+        print(f"  DEX_POOL_A: {self._redact_address(self.DEX_POOL_A) if self.DEX_POOL_A else '[NOT SET]'}")
+        print(f"  DEX_POOL_B: {self._redact_address(self.DEX_POOL_B) if self.DEX_POOL_B else '[NOT SET]'}")
+        print(f"  TOKEN0: {self._redact_address(self.TOKEN0) if self.TOKEN0 else '[NOT SET]'}")
+        print(f"  TOKEN1: {self._redact_address(self.TOKEN1) if self.TOKEN1 else '[NOT SET]'}")
+        print(f"  EARLY_STOP_MODE: {self.EARLY_STOP_MODE}")
+        print(f"  EARLY_STOP_LOOKBACK_BLOCKS: {self.EARLY_STOP_LOOKBACK_BLOCKS}")
+        print(f"  EARLY_STOP_LOOKBACK_SECS: {self.EARLY_STOP_LOOKBACK_SECS}s")
         print(f"  WORKER_POLL_SECONDS: {self.WORKER_POLL_SECONDS}")
         print(f"  WINDOW_MINUTES: {self.WINDOW_MINUTES}")
-        print(f"  MAX_ROWS_PER_ROTATION: {self.MAX_ROWS_PER_ROTATION}")
-        print(f"  PREVIEW_ROWS: {self.PREVIEW_ROWS}")
-        print(f"  MCP_INIT_ON_START: {self.MCP_INIT_ON_START}")
-        print(f"  LAST_BLOCK_STATE_PATH: {self.LAST_BLOCK_STATE_PATH}")
-        print(f"  DATA_OUT_DIR: {self.DATA_OUT_DIR}")
-        print(f"  LOG_LEVEL: {self.LOG_LEVEL}")
+        print(f"  Cache Paths:")
+        print(f"    - Decimals: {self.DECIMALS_CACHE_PATH}")
+        print(f"    - Block→TS: {self.BLOCK_TS_CACHE_PATH}")
+        print(f"    - State: {self.LAST_BLOCK_STATE_PATH}")
+        print(f"    - Preview: {self.PREVIEW_PATH}")
         print("=" * 60)
     
     @staticmethod

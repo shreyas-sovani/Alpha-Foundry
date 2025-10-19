@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 
 from settings import Settings
 from blockscout_client import MCPClient, get_mcp_client_from_env, MCPError
-from transform import normalize_tx, compute_price_delta
-from state import read_state, write_state
+from transform import normalize_tx, normalize_log_to_swap, compute_price_delta
+from state import read_state, write_state, DedupeTracker
 
 
 # Load environment variables
@@ -35,15 +35,98 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def fetch_and_process_logs(
+    client: MCPClient,
+    pool_addresses: List[str],
+    from_block: int,
+    to_block: int,
+    autoscout_base: str,
+    dedupe: DedupeTracker
+) -> List[Dict[str, Any]]:
+    """
+    Fetch logs (events) for pool addresses - LOGS-FIRST PATH.
+    
+    Args:
+        client: MCP client
+        pool_addresses: List of pool/router addresses
+        from_block: Starting block
+        to_block: Ending block
+        autoscout_base: Autoscout explorer base URL
+        dedupe: Deduplication tracker
+    
+    Returns:
+        List of normalized swap rows
+    """
+    all_rows = []
+    token_decimals = {}  # Cache for token decimals
+    
+    for address in pool_addresses:
+        logger.info(f"Fetching logs for {address[:10]}... (blocks {from_block}-{to_block})")
+        
+        cursor = None
+        log_count = 0
+        
+        while True:
+            try:
+                # Fetch page of logs
+                logs, next_cursor = await client.get_logs(
+                    address=address,
+                    from_block=from_block,
+                    to_block=to_block,
+                    topics=None,  # Get all topics, filter by signature in transform
+                    cursor=cursor
+                )
+                
+                log_count += len(logs)
+                
+                # Transform each log
+                for log in logs:
+                    tx_hash = log.get("transaction_hash") or log.get("transactionHash") or ""
+                    log_index = log.get("log_index") or log.get("logIndex") or 0
+                    
+                    # Check for duplicate
+                    if dedupe.is_duplicate(tx_hash, log_index):
+                        logger.debug(f"Skipping duplicate: {tx_hash}:{log_index}")
+                        continue
+                    
+                    row = normalize_log_to_swap(log, autoscout_base, token_decimals)
+                    if row:
+                        all_rows.append(row)
+                        dedupe.mark_seen(tx_hash, log_index)
+                
+                logger.debug(f"  Processed {len(logs)} logs, produced {len(all_rows)} rows so far")
+                
+                # Check for more pages
+                if not next_cursor:
+                    break
+                
+                cursor = next_cursor
+            
+            except MCPError as e:
+                logger.error(f"MCP error fetching logs: {e}")
+                break
+            except NotImplementedError as e:
+                logger.warning(f"Logs tool not available: {e}")
+                return []
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}", exc_info=True)
+                break
+        
+        logger.info(f"  ✓ Fetched {log_count} logs for {address[:10]}...")
+    
+    return all_rows
+
+
 async def fetch_and_process_transactions(
     client: MCPClient,
     pool_addresses: List[str],
     age_from: int,
     age_to: int,
-    autoscout_base: str
+    autoscout_base: str,
+    dedupe: DedupeTracker
 ) -> List[Dict[str, Any]]:
     """
-    Fetch transactions for pool addresses and transform to normalized rows.
+    Fetch transactions for pool addresses - FALLBACK PATH.
     
     Args:
         client: MCP client
@@ -51,6 +134,7 @@ async def fetch_and_process_transactions(
         age_from: Start timestamp (UNIX seconds)
         age_to: End timestamp (UNIX seconds)
         autoscout_base: Autoscout explorer base URL
+        dedupe: Deduplication tracker
     
     Returns:
         List of normalized swap rows
@@ -89,8 +173,18 @@ async def fetch_and_process_transactions(
                 
                 # Transform each transaction
                 for tx in transactions:
+                    tx_hash = tx.get("hash") or tx.get("transaction_hash") or ""
+                    
+                    # Use log_index=0 for tx-based deduplication
+                    if dedupe.is_duplicate(tx_hash, 0):
+                        logger.debug(f"Skipping duplicate tx: {tx_hash}")
+                        continue
+                    
                     rows = normalize_tx(tx, autoscout_base)
                     all_rows.extend(rows)
+                    
+                    if rows:
+                        dedupe.mark_seen(tx_hash, 0)
                 
                 logger.debug(f"  Processed {len(transactions)} tx, produced {len(all_rows)} rows so far")
                 
@@ -151,12 +245,19 @@ def rotate_jsonl_if_needed(file_path: Path, max_rows: int) -> bool:
     return False
 
 
-def update_metadata(metadata_path: Path, row_count: int) -> None:
-    """Update metadata.json with latest stats."""
+def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "1.0") -> None:
+    """Update metadata.json with latest stats and schema version."""
     metadata = {
+        "schema_version": schema_version,
         "last_updated": datetime.utcnow().isoformat() + "Z",
         "rows": row_count,
         "latest_cid": None,  # TODO: Integrate with Lighthouse/1MB DataCoin
+        "format": "jsonl",
+        "fields": [
+            "timestamp", "tx_hash", "log_index", "token_in", "token_out",
+            "amount_in", "amount_out", "pool_id", "normalized_price",
+            "delta_vs_other_pool", "explorer_link"
+        ]
     }
     
     with open(metadata_path, "w") as f:
@@ -166,9 +267,48 @@ def update_metadata(metadata_path: Path, row_count: int) -> None:
             json.dump(metadata, f, indent=2)
 
 
-async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any]) -> Dict[str, Any]:
+def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) -> None:
+    """Update preview.json with latest N rows for Hosted Agent."""
+    if not jsonl_path.exists():
+        preview = {
+            "preview_rows": [],
+            "total_rows": 0,
+            "last_updated": datetime.utcnow().isoformat() + "Z"
+        }
+    else:
+        # Read last N rows
+        rows = []
+        with open(jsonl_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        if USE_ORJSON:
+                            rows.append(orjson.loads(line))
+                        else:
+                            rows.append(json.loads(line))
+                    except:
+                        pass
+        
+        # Take last N rows
+        preview_rows_data = rows[-preview_rows:] if len(rows) > preview_rows else rows
+        
+        preview = {
+            "preview_rows": preview_rows_data,
+            "total_rows": len(rows),
+            "last_updated": datetime.utcnow().isoformat() + "Z"
+        }
+    
+    with open(preview_path, "w") as f:
+        if USE_ORJSON:
+            f.write(orjson.dumps(preview, option=orjson.OPT_INDENT_2).decode("utf-8"))
+        else:
+            json.dump(preview, f, indent=2)
+
+
+async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any], dedupe: DedupeTracker) -> Dict[str, Any]:
     """
-    Run one ingestion cycle.
+    Run one ingestion cycle with logs-first path.
     
     Returns:
         Updated state dict
@@ -176,6 +316,7 @@ async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any]
     data_out_dir = Path(settings.DATA_OUT_DIR)
     jsonl_path = data_out_dir / "dexarb_latest.jsonl"
     metadata_path = data_out_dir / "metadata.json"
+    preview_path = data_out_dir / "preview.json"
     
     # Get latest block
     try:
@@ -188,18 +329,10 @@ async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any]
         logger.warning("Skipping this cycle")
         return state
     
-    # Determine time window (age-based for MCP API)
-    # age_to = now, age_from = now - WINDOW_MINUTES
-    now = int(time.time())
-    age_to = now
-    age_from = now - (settings.WINDOW_MINUTES * 60)
-    
-    # Check if we should use last_seen_timestamp instead
-    last_seen_timestamp = state.get("last_seen_timestamp")
-    if last_seen_timestamp:
-        age_from = last_seen_timestamp
-    
-    logger.info(f"Time window: {age_from} to {age_to} ({settings.WINDOW_MINUTES} min window)")
+    # Determine block range
+    last_block = state.get("last_block", latest_block - 1000)  # Default: last 1000 blocks
+    from_block = last_block + 1
+    to_block = latest_block
     
     # Collect pool addresses
     pool_addresses = []
@@ -210,16 +343,50 @@ async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any]
     
     logger.info(f"Monitoring {len(pool_addresses)} pool(s): {[p[:10]+'...' for p in pool_addresses]}")
     
-    # Fetch and transform transactions
-    rows = await fetch_and_process_transactions(
-        client=client,
-        pool_addresses=pool_addresses,
-        age_from=age_from,
-        age_to=age_to,
-        autoscout_base=settings.AUTOSCOUT_BASE
-    )
+    # Try logs-first path if available
+    rows = []
+    used_logs_path = False
     
-    logger.info(f"✓ Produced {len(rows)} normalized rows")
+    if client.has_tool("get_logs"):
+        logger.info("Using LOGS-FIRST path (get_logs available)")
+        try:
+            rows = await fetch_and_process_logs(
+                client=client,
+                pool_addresses=pool_addresses,
+                from_block=from_block,
+                to_block=to_block,
+                autoscout_base=settings.AUTOSCOUT_BASE,
+                dedupe=dedupe
+            )
+            used_logs_path = True
+        except NotImplementedError:
+            logger.warning("Logs tool not available, falling back to transactions")
+    
+    # Fallback to transaction-based path
+    if not used_logs_path:
+        logger.info("Using TRANSACTION-BASED fallback path")
+        # Determine time window (age-based for MCP API)
+        now = int(time.time())
+        age_to = now
+        age_from = now - (settings.WINDOW_MINUTES * 60)
+        
+        # Check if we should use last_seen_timestamp instead
+        last_seen_timestamp = state.get("last_seen_timestamp")
+        if last_seen_timestamp:
+            age_from = last_seen_timestamp
+        
+        logger.info(f"Time window: {age_from} to {age_to} ({settings.WINDOW_MINUTES} min window)")
+        
+        rows = await fetch_and_process_transactions(
+            client=client,
+            pool_addresses=pool_addresses,
+            age_from=age_from,
+            age_to=age_to,
+            autoscout_base=settings.AUTOSCOUT_BASE,
+            dedupe=dedupe
+        )
+    
+    logger.info(f"✓ Produced {len(rows)} normalized rows (deduped)")
     
     # Append to JSONL
     if rows:
@@ -231,14 +398,19 @@ async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any]
     
     # Update metadata
     total_rows = count_jsonl_rows(jsonl_path)
-    update_metadata(metadata_path, total_rows)
+    update_metadata(metadata_path, total_rows, schema_version="1.0")
     logger.info(f"✓ Updated metadata: {total_rows} rows")
+    
+    # Update preview for Hosted Agent
+    update_preview(preview_path, jsonl_path, settings.PREVIEW_ROWS)
+    logger.info(f"✓ Updated preview: {preview_path}")
     
     # Update state
     new_state = {
-        "last_seen_timestamp": age_to,
-        "last_block": latest_block,
-        "last_updated": datetime.utcnow().isoformat() + "Z"
+        "last_seen_timestamp": int(time.time()),
+        "last_block": to_block,
+        "last_updated": datetime.utcnow().isoformat() + "Z",
+        "used_logs_path": used_logs_path
     }
     
     # Print cycle summary
@@ -246,14 +418,16 @@ async def run_cycle(client: MCPClient, settings: Settings, state: Dict[str, Any]
     print("=" * 60)
     print("CYCLE SUMMARY")
     print("=" * 60)
-    print(f"  Fetched transactions: {len(rows)} tx processed")
+    print(f"  Data path: {'LOGS-FIRST' if used_logs_path else 'TRANSACTION-BASED'}")
+    print(f"  Block range: {from_block} to {to_block}")
     print(f"  Produced rows: {len(rows)}")
     print(f"  Total rows in file: {total_rows}")
+    print(f"  Dedupe cache size: {len(dedupe.seen)}")
     print(f"  Rotated: {'Yes' if rotated else 'No'}")
-    print(f"  New last_seen_timestamp: {age_to}")
-    print(f"  New last_block: {latest_block}")
+    print(f"  New last_block: {to_block}")
     print(f"  JSONL path: {jsonl_path}")
     print(f"  Metadata path: {metadata_path}")
+    print(f"  Preview path: {preview_path}")
     print("=" * 60)
     print("")
     
@@ -295,6 +469,10 @@ def main():
     state = read_state(settings.LAST_BLOCK_STATE_PATH)
     logger.info(f"Loaded state: {state}")
     
+    # Load dedupe tracker
+    dedupe_path = Path(settings.LAST_BLOCK_STATE_PATH).parent / "dedupe.json"
+    dedupe = DedupeTracker.load(str(dedupe_path))
+    
     # Print dry-run summary
     print("")
     print("=" * 60)
@@ -305,10 +483,13 @@ def main():
         print(f"    - DEX_POOL_A: {settings.DEX_POOL_A}")
     if settings.DEX_POOL_B:
         print(f"    - DEX_POOL_B: {settings.DEX_POOL_B}")
-    print(f"  Window strategy: Age-based (last {settings.WINDOW_MINUTES} minutes)")
+    print(f"  Data path: LOGS-FIRST (if available), else TRANSACTION-BASED")
+    print(f"  Window strategy: Block-based or age-based (adaptive)")
     print(f"  JSONL output: {data_out_dir / 'dexarb_latest.jsonl'}")
     print(f"  Metadata output: {data_out_dir / 'metadata.json'}")
+    print(f"  Preview output: {data_out_dir / 'preview.json'}")
     print(f"  Max rows per file: {settings.MAX_ROWS_PER_ROTATION}")
+    print(f"  Deduplication: Enabled (cache size: {len(dedupe.seen)})")
     print(f"  Poll interval: {settings.WORKER_POLL_SECONDS}s")
     print("=" * 60)
     print("")
@@ -321,13 +502,16 @@ def main():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    state = loop.run_until_complete(run_cycle(client, settings, state))
+                    state = loop.run_until_complete(run_cycle(client, settings, state, dedupe))
                 finally:
                     loop.close()
                 
-                # Persist state
+                # Persist state and dedupe
                 write_state(settings.LAST_BLOCK_STATE_PATH, state)
                 logger.info(f"✓ State saved to {settings.LAST_BLOCK_STATE_PATH}")
+                
+                dedupe.save(str(dedupe_path))
+                logger.debug(f"✓ Dedupe saved to {dedupe_path}")
                 
             except KeyboardInterrupt:
                 raise
@@ -340,6 +524,9 @@ def main():
     except KeyboardInterrupt:
         logger.info("Received interrupt, shutting down...")
     finally:
+        # Save dedupe one last time
+        dedupe.save(str(dedupe_path))
+        
         # Close client
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

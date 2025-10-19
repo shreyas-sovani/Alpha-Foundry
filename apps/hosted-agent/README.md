@@ -36,8 +36,57 @@ The agent will need:
 - `AUTOSCOUT_BASE`: Base URL for explorer links
 - `CHAIN_ID`: Chain identifier for context
 
+## Data Access
+
+The hosted agent should read from the worker's output directory:
+
+### preview.json
+Updated every cycle with the latest N rows (default: 5). Format:
+```json
+{
+  "preview_rows": [
+    {
+      "timestamp": 1729353600,
+      "tx_hash": "0x...",
+      "log_index": 0,
+      "token_in": "0x...",
+      "token_out": "0x...",
+      "amount_in": "1000000",
+      "amount_out": "2000000",
+      "pool_id": "0x...",
+      "normalized_price": 2.0,
+      "delta_vs_other_pool": null,
+      "explorer_link": "https://..."
+    }
+  ],
+  "total_rows": 23,
+  "last_updated": "2025-10-19T12:34:56Z"
+}
+```
+
+### metadata.json
+Overall dataset statistics. Format:
+```json
+{
+  "schema_version": "1.0",
+  "last_updated": "2025-10-19T12:34:56Z",
+  "rows": 23,
+  "latest_cid": null,
+  "format": "jsonl",
+  "fields": ["timestamp", "tx_hash", "log_index", ...]
+}
+```
+
+### dexarb_latest.jsonl
+Full dataset in JSONL format (one JSON object per line). The agent can:
+- Parse last N lines for recent activity
+- Count total lines for dataset size
+- Filter by timestamp for time-based queries
+
 ## TODO
 
 - Implement agent logic using ASI:One protocol
 - Add message handlers for arbitrage queries
-- Integrate with worker metadata and JSONL output
+- Read preview.json for quick responses
+- Parse metadata.json for dataset stats
+- Stream JSONL for full dataset access if needed

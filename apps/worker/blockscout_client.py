@@ -20,7 +20,7 @@ class MCPError(Exception):
 
 class MCPClient:
     """
-    Async client for Blockscout MCP Server.
+    Async client for Blockscout MCP Server with dynamic tool discovery.
     
     References:
     - https://docs.blockscout.com/devs/mcp-server
@@ -34,6 +34,7 @@ class MCPClient:
         self.client = httpx.AsyncClient(timeout=timeout)
         self.session_token: Optional[str] = None
         self.available_tools: List[str] = []
+        self.method_map: Dict[str, str] = {}  # Canonical name -> actual tool name
     
     async def init_session(self) -> List[str]:
         """
@@ -60,7 +61,11 @@ class MCPClient:
             elif isinstance(response, list):
                 self.available_tools = response
             
+            # Build method map for canonical names
+            self._build_method_map()
+            
             logger.info(f"✓ MCP session initialized. Available tools: {', '.join(self.available_tools)}")
+            logger.info(f"✓ Method map: {self.method_map}")
             return self.available_tools
         
         except Exception as e:
@@ -70,10 +75,62 @@ class MCPClient:
                 "get_latest_block",
                 "get_transactions_by_address",
                 "get_contract_abi",
-                "read_contract"
+                "read_contract",
+                "get_logs"
             ]
+            self._build_method_map()
             logger.info(f"Using default tool set: {', '.join(self.available_tools)}")
             return self.available_tools
+    
+    def _build_method_map(self):
+        """Build method map from discovered tools to canonical names."""
+        # Map variations to canonical names
+        tool_aliases = {
+            "get_latest_block": ["get_latest_block", "latest_block", "getLatestBlock"],
+            "get_transactions_by_address": ["get_transactions_by_address", "get_transactions", "getTransactions"],
+            "get_contract_abi": ["get_contract_abi", "get_abi", "getAbi", "contract_abi"],
+            "read_contract": ["read_contract", "readContract", "call_contract"],
+            "get_logs": ["get_logs", "getLogs", "get_transaction_logs", "logs"],
+            "get_token_info": ["get_token_info", "getTokenInfo", "token_info"],
+        }
+        
+        for canonical, aliases in tool_aliases.items():
+            for alias in aliases:
+                if alias in self.available_tools:
+                    self.method_map[canonical] = alias
+                    break
+        
+        logger.debug(f"Built method map: {self.method_map}")
+    
+    def has_tool(self, canonical_name: str) -> bool:
+        """Check if a tool is available by canonical name."""
+        return canonical_name in self.method_map
+    
+    async def invoke_or_raise(self, canonical_name: str, params: Dict[str, Any]) -> Any:
+        """
+        Invoke a tool by canonical name or raise NotImplementedError.
+        
+        Args:
+            canonical_name: Canonical tool name (e.g., 'get_logs')
+            params: Tool parameters
+        
+        Returns:
+            Tool response
+        
+        Raises:
+            NotImplementedError: If tool is not available
+        """
+        if not self.has_tool(canonical_name):
+            available = ", ".join(sorted(self.method_map.keys()))
+            raise NotImplementedError(
+                f"Tool '{canonical_name}' not available in MCP server. "
+                f"Available tools: {available}. "
+                f"See: https://docs.blockscout.com/devs/mcp-server"
+            )
+        
+        actual_tool = self.method_map[canonical_name]
+        logger.debug(f"Invoking {canonical_name} -> {actual_tool}")
+        return await self._call_tool(actual_tool, params)
     
     @retry(
         stop=stop_after_attempt(3),
@@ -265,23 +322,129 @@ class MCPClient:
         Note: This tool may not be exposed by all MCP servers.
         Reference: https://docs.blockscout.com/devs/mcp-server
         """
-        if "read_contract" not in self.available_tools:
-            raise NotImplementedError(
-                "read_contract tool not available in MCP server. "
-                "See: https://docs.blockscout.com/devs/mcp-server for available tools."
-            )
+        try:
+            params = {
+                "chain_id": self.chain_id,
+                "address": address,
+                "abi": abi,
+                "function": function,
+                "args": args
+            }
+            
+            logger.debug(f"Reading contract {address} function {function}")
+            
+            return await self.invoke_or_raise("read_contract", params)
         
+        except NotImplementedError as e:
+            logger.warning(str(e))
+            raise
+    
+    async def get_logs(
+        self,
+        address: Optional[str] = None,
+        from_block: Optional[int] = None,
+        to_block: Optional[int] = None,
+        topics: Optional[List[Optional[str]]] = None,
+        cursor: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """
+        Get logs (events) with optional filtering.
+        
+        Args:
+            address: Contract address to filter by
+            from_block: Starting block number
+            to_block: Ending block number
+            topics: List of topics (topic0, topic1, ...) - None for wildcard
+            cursor: Pagination cursor
+        
+        Returns:
+            Tuple of (logs list, next_cursor or None)
+        
+        Reference: https://github.com/blockscout/mcp-server-plugin
+        """
         params = {
-            "chain_id": self.chain_id,
-            "address": address,
-            "abi": abi,
-            "function": function,
-            "args": args
+            "chain_id": self.chain_id
         }
         
-        logger.debug(f"Reading contract {address} function {function}")
+        if address:
+            params["address"] = address
+        if from_block is not None:
+            params["from_block"] = from_block
+        if to_block is not None:
+            params["to_block"] = to_block
+        if topics:
+            params["topics"] = topics
+        if cursor:
+            params["cursor"] = cursor
         
-        return await self._call_tool("read_contract", params)
+        logger.debug(f"Fetching logs for address={address}, blocks={from_block}-{to_block}")
+        
+        try:
+            response = await self.invoke_or_raise("get_logs", params)
+        except NotImplementedError:
+            logger.warning("get_logs tool not available, falling back to transaction-based approach")
+            return [], None
+        
+        # Handle different response formats
+        if isinstance(response, dict):
+            items = response.get("items") or response.get("logs") or response.get("result", [])
+            next_cursor = response.get("next_cursor") or response.get("next_page_params")
+        elif isinstance(response, list):
+            items = response
+            next_cursor = None
+        else:
+            items = []
+            next_cursor = None
+        
+        logger.debug(f"Fetched {len(items)} logs, next_cursor={next_cursor}")
+        
+        return items, next_cursor
+    
+    async def get_token_info(self, address: str) -> Dict[str, Any]:
+        """
+        Get ERC20 token information (name, symbol, decimals).
+        
+        Args:
+            address: Token contract address
+        
+        Returns:
+            Dict with token info (decimals, symbol, name)
+        
+        Note: Falls back to contract reads if tool not available.
+        """
+        try:
+            params = {
+                "chain_id": self.chain_id,
+                "address": address
+            }
+            
+            response = await self.invoke_or_raise("get_token_info", params)
+            return response
+        
+        except NotImplementedError:
+            # Fallback: read contract directly
+            logger.debug(f"get_token_info not available, reading contract {address}")
+            
+            # Standard ERC20 ABI subset
+            erc20_abi = [
+                {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
+                {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+                {"constant": True, "inputs": [], "name": "name", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+            ]
+            
+            try:
+                decimals = await self.read_contract(address, erc20_abi, "decimals", [])
+                symbol = await self.read_contract(address, erc20_abi, "symbol", [])
+                name = await self.read_contract(address, erc20_abi, "name", [])
+                
+                return {
+                    "decimals": int(decimals) if decimals else 18,
+                    "symbol": symbol if symbol else "UNKNOWN",
+                    "name": name if name else "Unknown Token"
+                }
+            except Exception as e:
+                logger.warning(f"Failed to read token info for {address}: {e}")
+                return {"decimals": 18, "symbol": "UNKNOWN", "name": "Unknown Token"}
     
     async def close(self):
         """Close the HTTP client."""

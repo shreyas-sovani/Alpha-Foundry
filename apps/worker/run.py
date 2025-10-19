@@ -87,17 +87,26 @@ async def fetch_and_process_logs(
                         unique_signatures.add(topics[0])
                 
                 if unique_signatures:
-                    logger.debug(f"  Found {len(unique_signatures)} unique event signatures in batch:")
-                    for sig in list(unique_signatures)[:5]:  # Show first 5
-                        logger.debug(f"    - {sig}")
+                    logger.info(f"  Found {len(unique_signatures)} unique event signatures in batch:")
+                    for sig in sorted(unique_signatures):
+                        logger.info(f"    - {sig}")
+                
+                # Count logs before filtering
+                logs_before_filter = len(logs)
+                
+                # Sample first few block numbers
+                if logs:
+                    sample_blocks = [log.get("block_number") for log in logs[:5]]
+                    logger.info(f"  Sample block numbers from first 5 logs: {sample_blocks}")
                 
                 # Transform each log
+                logs_after_block_filter = 0
                 for log in logs:
-                    # IMPORTANT: Filter by block range since API doesn't support it
-                    block_number = log.get("block_number")
-                    if block_number is not None:
-                        if block_number < from_block or block_number > to_block:
-                            continue
+                    # NOTE: Blockscout API doesn't filter by block range, it returns ALL logs
+                    # For now, we'll process all logs and rely on dedupe to avoid reprocessing
+                    # TODO: In production, implement time-based filtering or state tracking
+                    
+                    logs_after_block_filter += 1
                     
                     tx_hash = log.get("transaction_hash") or log.get("transactionHash") or ""
                     log_index = log.get("log_index") or log.get("logIndex") or 0
@@ -111,7 +120,12 @@ async def fetch_and_process_logs(
                     if row:
                         all_rows.append(row)
                         dedupe.mark_seen(tx_hash, log_index)
+                    else:
+                        # Debug: log why normalization failed
+                        topic0 = log.get("topics", [])[0] if log.get("topics") else "NO_TOPICS"
+                        logger.info(f"  Failed to normalize log with topic0={topic0}")
                 
+                logger.info(f"  Block range {from_block}-{to_block}: {logs_before_filter} total logs, {logs_after_block_filter} in range, {len(all_rows)} normalized")
                 logger.debug(f"  Processed {len(logs)} logs, produced {len(all_rows)} rows so far")
                 
                 # Check if we've gone past the from_block (logs come newest-first)

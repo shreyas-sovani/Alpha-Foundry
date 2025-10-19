@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     
     # Worker Behavior
     WORKER_POLL_SECONDS: int = 300
+    WORKER_HTTP_HOST: str = "0.0.0.0"
+    WORKER_HTTP_PORT: int = 8787
     WINDOW_MINUTES: int = 5
     MAX_ROWS_PER_ROTATION: int = 1000
     PREVIEW_ROWS: int = 5
@@ -39,6 +41,7 @@ class Settings(BaseSettings):
     BLOCK_TS_CACHE_PATH: str = "state/block_ts.json"
     DATA_OUT_DIR: str = "apps/worker/out"
     PREVIEW_PATH: str = "apps/worker/out/preview.json"
+    METADATA_PATH: str = "apps/worker/out/metadata.json"
     
     # Schema
     SCHEMA_VERSION: str = "1.1"

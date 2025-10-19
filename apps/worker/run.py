@@ -1,10 +1,13 @@
 """Main worker loop for DEX arbitrage data ingestion."""
 import asyncio
 import logging
+import os
+import signal
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 try:
     import orjson
@@ -19,6 +22,7 @@ from settings import Settings
 from blockscout_rest import BlockscoutRESTClient, get_rest_client_from_env
 from transform import normalize_tx, normalize_log_to_swap, compute_price_delta
 from state import read_state, write_state, DedupeTracker
+from http_server import ReadOnlyHTTPServer
 
 
 # Load environment variables
@@ -33,6 +37,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Global HTTP server instance for cleanup
+http_server: Optional[ReadOnlyHTTPServer] = None
 
 
 async def fetch_and_process_logs(
@@ -303,7 +310,7 @@ def rotate_jsonl_if_needed(file_path: Path, max_rows: int) -> bool:
 
 
 def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "1.0") -> None:
-    """Update metadata.json with latest stats and schema version."""
+    """Update metadata.json with latest stats, schema version, and freshness."""
     
     # Schema 1.1 fields include enriched token metadata
     if schema_version == "1.1":
@@ -321,20 +328,53 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
             "delta_vs_other_pool", "explorer_link"
         ]
     
+    now_utc = datetime.utcnow()
+    last_updated_iso = now_utc.isoformat() + "Z"
+    
+    # Compute freshness: read existing metadata if available
+    freshness_minutes = 0
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                existing = json.load(f)
+                prev_updated = existing.get("last_updated", "")
+                if prev_updated:
+                    # Parse ISO timestamp
+                    prev_dt = datetime.fromisoformat(prev_updated.replace("Z", "+00:00"))
+                    prev_dt_naive = prev_dt.replace(tzinfo=None)
+                    delta = now_utc - prev_dt_naive
+                    freshness_minutes = int(delta.total_seconds() / 60)
+        except Exception as e:
+            logger.debug(f"Could not compute freshness: {e}")
+    
     metadata = {
         "schema_version": schema_version,
-        "last_updated": datetime.utcnow().isoformat() + "Z",
+        "last_updated": last_updated_iso,
         "rows": row_count,
-        "latest_cid": None,  # TODO: Integrate with Lighthouse/1MB DataCoin
+        "freshness_minutes": freshness_minutes,
+        "latest_cid": None,
         "format": "jsonl",
         "fields": fields
     }
     
-    with open(metadata_path, "w") as f:
-        if USE_ORJSON:
-            f.write(orjson.dumps(metadata, option=orjson.OPT_INDENT_2).decode("utf-8"))
-        else:
-            json.dump(metadata, f, indent=2)
+    # Atomic write with temp file + rename
+    temp_path = metadata_path.with_suffix(".json.tmp")
+    try:
+        with open(temp_path, "w") as f:
+            if USE_ORJSON:
+                f.write(orjson.dumps(metadata, option=orjson.OPT_INDENT_2).decode("utf-8"))
+            else:
+                json.dump(metadata, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        
+        # Atomic rename
+        temp_path.replace(metadata_path)
+    except Exception as e:
+        logger.error(f"Failed to write metadata: {e}")
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
 
 
 def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) -> None:
@@ -568,7 +608,9 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
 
 
 def main():
-    """Main worker loop."""
+    """Main worker loop with HTTP server."""
+    global http_server
+    
     logger.info("=" * 60)
     logger.info("DEX Arbitrage Data Worker Starting")
     logger.info("=" * 60)
@@ -583,6 +625,46 @@ def main():
     data_out_dir = Path(settings.DATA_OUT_DIR)
     data_out_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {data_out_dir.absolute()}")
+    
+    # Start HTTP server in background thread
+    http_server = ReadOnlyHTTPServer(
+        host=settings.WORKER_HTTP_HOST,
+        port=settings.WORKER_HTTP_PORT,
+        preview_path=settings.PREVIEW_PATH,
+        metadata_path=settings.METADATA_PATH
+    )
+    
+    def run_http_server():
+        """Run HTTP server in its own event loop."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(http_server.start())
+            # Keep the server running
+            loop.run_forever()
+        except Exception as e:
+            logger.error(f"HTTP server error: {e}")
+        finally:
+            loop.close()
+    
+    # Start HTTP server in background thread
+    http_thread = threading.Thread(target=run_http_server, daemon=True)
+    http_thread.start()
+    
+    # Give server time to start
+    time.sleep(1)
+    
+    logger.info("=" * 60)
+    logger.info("HTTP ENDPOINTS:")
+    logger.info(f"  • http://{settings.WORKER_HTTP_HOST}:{settings.WORKER_HTTP_PORT}/preview")
+    logger.info(f"  • http://{settings.WORKER_HTTP_HOST}:{settings.WORKER_HTTP_PORT}/metadata")
+    logger.info(f"  • http://{settings.WORKER_HTTP_HOST}:{settings.WORKER_HTTP_PORT}/health")
+    logger.info("=" * 60)
+    logger.info("")
+    logger.info("Test with:")
+    logger.info(f"  curl -s http://localhost:{settings.WORKER_HTTP_PORT}/preview | head")
+    logger.info(f"  curl -s http://localhost:{settings.WORKER_HTTP_PORT}/metadata | jq")
+    logger.info("=" * 60)
     
     # Initialize MCP client
     try:
@@ -676,6 +758,10 @@ def main():
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(client.close())
+            
+            # Stop HTTP server
+            if http_server:
+                loop.run_until_complete(http_server.stop())
         finally:
             loop.close()
         logger.info("Worker stopped")

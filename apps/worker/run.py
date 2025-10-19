@@ -50,35 +50,47 @@ async def fetch_and_process_logs(
     autoscout_base: str,
     dedupe: DedupeTracker,
     pool_tokens: Dict[str, Any],
-    early_stop_watermark: int = 0,
-    early_stop_mode: str = "block"
-) -> List[Dict[str, Any]]:
+    watermark_ts: int = 0,
+    watermark_block: int = 0,
+    early_stop_mode: str = "timestamp",
+    max_pages: int = 10
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Fetch logs (events) for pool addresses - LOGS-FIRST PATH with early-stop guards.
     
     Args:
-        client: MCP client
+        client: REST client
         pool_addresses: List of pool/router addresses
-        from_block: Starting block
-        to_block: Ending block
+        from_block: Starting block (may be ignored by REST API)
+        to_block: Ending block (may be ignored by REST API)
         autoscout_base: Autoscout explorer base URL
         dedupe: Deduplication tracker
         pool_tokens: Cache of pool_address -> (token0, token1)
-        early_stop_watermark: Stop pagination when logs older than this (block or timestamp)
+        watermark_ts: Stop pagination when logs older than this timestamp
+        watermark_block: Stop pagination when logs older than this block
         early_stop_mode: "block" or "timestamp"
+        max_pages: Maximum pages to fetch per cycle
     
     Returns:
-        List of normalized swap rows
+        Tuple of (normalized swap rows, stats dict)
     """
     all_rows = []
+    stats = {
+        "total_logs_fetched": 0,
+        "pages_fetched": 0,
+        "early_stop_triggered": False,
+        "early_stop_reason": None,
+        "max_block_seen": 0,
+        "max_ts_seen": 0,
+    }
     
     for address in pool_addresses:
-        logger.info(f"Fetching logs for {address[:10]}... (blocks {from_block}-{to_block})")
+        logger.info(f"Fetching logs for {address[:10]}... (watermark_ts={watermark_ts}, watermark_block={watermark_block})")
         
         cursor = None
-        log_count = 0
+        page_count = 0
         
-        while True:
+        while page_count < max_pages:
             try:
                 # Fetch page of logs
                 logs, next_cursor = await client.get_logs(
@@ -89,37 +101,55 @@ async def fetch_and_process_logs(
                     cursor=cursor
                 )
                 
-                log_count += len(logs)
+                page_count += 1
+                stats["pages_fetched"] += 1
+                stats["total_logs_fetched"] += len(logs)
                 
-                # DEBUG: Track unique event signatures in this batch
-                unique_signatures = set()
+                if not logs:
+                    logger.info(f"  Page {page_count}: No logs returned")
+                    break
+                
+                logger.info(f"  Page {page_count}: Fetched {len(logs)} logs")
+                
+                # Compute timestamps for logs using block_ts cache
+                log_timestamps = []
+                log_blocks = []
                 for log in logs:
-                    topics = log.get("topics") or []
-                    if topics:
-                        unique_signatures.add(topics[0])
+                    block_num = log.get("block_number") or log.get("blockNumber") or 0
+                    log_blocks.append(block_num)
+                    
+                    # Get timestamp from cache
+                    block_info = await client.get_block_info(block_num)
+                    log_ts = block_info.get("timestamp", 0)
+                    log_timestamps.append(log_ts)
                 
-                if unique_signatures:
-                    logger.info(f"  Found {len(unique_signatures)} unique event signatures in batch:")
-                    for sig in sorted(unique_signatures):
-                        logger.info(f"    - {sig}")
+                # Check early-stop condition at page level
+                if log_blocks:
+                    max_block_in_page = max(log_blocks)
+                    min_block_in_page = min(log_blocks)
+                    stats["max_block_seen"] = max(stats["max_block_seen"], max_block_in_page)
                 
-                # Count logs before filtering
-                logs_before_filter = len(logs)
-                
-                # Sample first few block numbers
-                if logs:
-                    sample_blocks = [log.get("block_number") for log in logs[:5]]
-                    logger.info(f"  Sample block numbers from first 5 logs: {sample_blocks}")
+                if log_timestamps:
+                    max_ts_in_page = max(log_timestamps)
+                    min_ts_in_page = min(log_timestamps)
+                    stats["max_ts_seen"] = max(stats["max_ts_seen"], max_ts_in_page)
+                    
+                    if early_stop_mode == "timestamp" and watermark_ts > 0:
+                        if min_ts_in_page <= watermark_ts:
+                            stats["early_stop_triggered"] = True
+                            stats["early_stop_reason"] = f"timestamp watermark reached (min_ts={min_ts_in_page} <= {watermark_ts})"
+                            logger.info(f"  Early-stop: {stats['early_stop_reason']}")
+                            break
+                    
+                    if early_stop_mode == "block" and watermark_block > 0:
+                        if min_block_in_page <= watermark_block:
+                            stats["early_stop_triggered"] = True
+                            stats["early_stop_reason"] = f"block watermark reached (min_block={min_block_in_page} <= {watermark_block})"
+                            logger.info(f"  Early-stop: {stats['early_stop_reason']}")
+                            break
                 
                 # Transform each log
-                logs_after_block_filter = 0
-                for log in logs:
-                    # NOTE: Blockscout API doesn't filter by block range, it returns ALL logs
-                    # For now, we'll process all logs and rely on dedupe to avoid reprocessing
-                    # TODO: In production, implement time-based filtering or state tracking
-                    
-                    logs_after_block_filter += 1
-                    
+                for idx, log in enumerate(logs):
                     tx_hash = log.get("transaction_hash") or log.get("transactionHash") or ""
                     log_index = log.get("log_index") or log.get("logIndex") or 0
                     
@@ -128,7 +158,6 @@ async def fetch_and_process_logs(
                         logger.debug(f"Skipping duplicate: {tx_hash}:{log_index}")
                         continue
                     
-                    # Get block number for timestamp lookup and early-stop check
                     block_num = log.get("block_number") or log.get("blockNumber") or 0
                     
                     try:
@@ -136,49 +165,27 @@ async def fetch_and_process_logs(
                         if row:
                             all_rows.append(row)
                             dedupe.mark_seen(tx_hash, log_index)
-                        else:
-                            # Debug: log why normalization failed
-                            topic0 = log.get("topics", [])[0] if log.get("topics") else "NO_TOPICS"
-                            logger.debug(f"  Failed to normalize log with topic0={topic0}")
                     except Exception as e:
                         logger.error(f"  Error normalizing log {tx_hash}:{log_index}: {e}", exc_info=True)
                         continue
                 
-                logger.info(f"  Block range {from_block}-{to_block}: {logs_before_filter} total logs, {logs_after_block_filter} in range, {len(all_rows)} normalized")
-                logger.debug(f"  Processed {len(logs)} logs, produced {len(all_rows)} rows so far")
-                
-                # Early-stop guard: Check if we've reached the watermark
-                if logs and early_stop_watermark > 0:
-                    if early_stop_mode == "block":
-                        oldest_in_page = min(log.get("block_number", float('inf')) for log in logs)
-                        if oldest_in_page <= early_stop_watermark:
-                            logger.info(f"  Early-stop: Reached block {oldest_in_page} <= watermark {early_stop_watermark}")
-                            break
-                    elif early_stop_mode == "timestamp":
-                        oldest_ts = min(log.get("timestamp", float('inf')) for log in logs)
-                        if oldest_ts <= early_stop_watermark:
-                            logger.info(f"  Early-stop: Reached timestamp {oldest_ts} <= watermark {early_stop_watermark}")
-                            break
-                
                 # Check for more pages
                 if not next_cursor:
+                    logger.info(f"  No more pages for {address[:10]}...")
                     break
                 
                 cursor = next_cursor
             
             except Exception as e:
-                logger.error(f"MCP error fetching logs: {e}")
-                break
-            except NotImplementedError as e:
-                logger.warning(f"Logs tool not available: {e}")
-                return []
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}", exc_info=True)
+                logger.error(f"Error fetching logs: {e}", exc_info=True)
                 break
         
-        logger.info(f"  ✓ Fetched {log_count} logs for {address[:10]}...")
+        if page_count >= max_pages:
+            logger.warning(f"  Reached max pages ({max_pages}) for {address[:10]}..., will continue next cycle")
+        
+        logger.info(f"  ✓ Fetched {stats['total_logs_fetched']} logs across {page_count} pages for {address[:10]}...")
     
-    return all_rows
+    return all_rows, stats
 
 
 async def fetch_and_process_transactions(
@@ -357,7 +364,7 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
         "fields": fields
     }
     
-    # Atomic write with temp file + rename
+    # Atomic write with temp file + rename + fsync
     temp_path = metadata_path.with_suffix(".json.tmp")
     try:
         with open(temp_path, "w") as f:
@@ -370,6 +377,7 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
         
         # Atomic rename
         temp_path.replace(metadata_path)
+        logger.debug(f"Metadata written atomically to {metadata_path}")
     except Exception as e:
         logger.error(f"Failed to write metadata: {e}")
         if temp_path.exists():
@@ -377,16 +385,22 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
         raise
 
 
-def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) -> None:
-    """Update preview.json with latest N rows for Hosted Agent."""
+def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) -> tuple[int, int]:
+    """
+    Update preview.json with latest N rows for Hosted Agent.
+    
+    Returns:
+        Tuple of (total_rows, latest_timestamp)
+    """
     if not jsonl_path.exists():
         preview = {
             "preview_rows": [],
             "total_rows": 0,
             "last_updated": datetime.utcnow().isoformat() + "Z"
         }
+        latest_ts = 0
     else:
-        # Read last N rows
+        # Read last N rows efficiently (read from end if file is large)
         rows = []
         with open(jsonl_path, "r") as f:
             for line in f:
@@ -400,8 +414,11 @@ def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) 
                     except:
                         pass
         
-        # Take last N rows
+        # Take last N rows (most recent)
         preview_rows_data = rows[-preview_rows:] if len(rows) > preview_rows else rows
+        
+        # Get latest timestamp
+        latest_ts = max((row.get("timestamp", 0) for row in preview_rows_data), default=0)
         
         preview = {
             "preview_rows": preview_rows_data,
@@ -409,11 +426,27 @@ def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) 
             "last_updated": datetime.utcnow().isoformat() + "Z"
         }
     
-    with open(preview_path, "w") as f:
-        if USE_ORJSON:
-            f.write(orjson.dumps(preview, option=orjson.OPT_INDENT_2).decode("utf-8"))
-        else:
-            json.dump(preview, f, indent=2)
+    # Atomic write with temp file + rename + fsync
+    temp_path = preview_path.with_suffix(".json.tmp")
+    try:
+        with open(temp_path, "w") as f:
+            if USE_ORJSON:
+                f.write(orjson.dumps(preview, option=orjson.OPT_INDENT_2).decode("utf-8"))
+            else:
+                json.dump(preview, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        
+        # Atomic rename
+        temp_path.replace(preview_path)
+        logger.debug(f"Preview written atomically to {preview_path}")
+    except Exception as e:
+        logger.error(f"Failed to write preview: {e}")
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+    
+    return len(rows) if jsonl_path.exists() else 0, latest_ts
 
 
 async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dict[str, Any], dedupe: DedupeTracker) -> Dict[str, Any]:
@@ -430,6 +463,9 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
     metadata_path = data_out_dir / "metadata.json"
     preview_path = data_out_dir / settings.PREVIEW_PATH.split("/")[-1]
     
+    # Count rows before cycle
+    rows_before = count_jsonl_rows(jsonl_path)
+    
     # Get latest block
     try:
         latest = await client.get_latest_block()
@@ -441,10 +477,44 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
         logger.warning("Skipping this cycle")
         return state
     
-    # Determine block range
-    last_block = state.get("last_block", latest_block - settings.LOOKBACK_BLOCKS)
-    from_block = last_block + 1
-    to_block = latest_block
+    # Determine windowing strategy and watermark
+    early_stop_mode = settings.EARLY_STOP_MODE or settings.WINDOW_STRATEGY
+    now_ts = int(time.time())
+    
+    if settings.WINDOW_STRATEGY == "timestamp":
+        # Timestamp-based windowing
+        last_seen_ts = state.get("last_seen_ts", 0)
+        if last_seen_ts == 0:
+            # First run: use WINDOW_MINUTES from now
+            watermark_ts = now_ts - (settings.WINDOW_MINUTES * 60)
+        else:
+            # Subsequent runs: use max of last_seen_ts and recent window
+            watermark_ts = max(last_seen_ts, now_ts - (settings.WINDOW_MINUTES * 60))
+        
+        watermark_block = 0
+        from_block = 0  # REST API may ignore this
+        to_block = latest_block
+        
+        logger.info(f"Window strategy: TIMESTAMP")
+        logger.info(f"  Watermark timestamp: {watermark_ts} ({datetime.fromtimestamp(watermark_ts).isoformat()})")
+        logger.info(f"  Window: last {settings.WINDOW_MINUTES} minutes")
+    else:
+        # Block-based windowing
+        last_seen_block = state.get("last_seen_block", 0)
+        if last_seen_block == 0:
+            # First run: use BLOCK_LOOKBACK from latest
+            watermark_block = max(0, latest_block - settings.BLOCK_LOOKBACK)
+        else:
+            # Subsequent runs: use max of last_seen_block and recent window
+            watermark_block = max(last_seen_block, latest_block - settings.BLOCK_LOOKBACK)
+        
+        watermark_ts = 0
+        from_block = watermark_block
+        to_block = latest_block
+        
+        logger.info(f"Window strategy: BLOCK")
+        logger.info(f"  Watermark block: {watermark_block}")
+        logger.info(f"  Window: last {settings.BLOCK_LOOKBACK} blocks")
     
     # Pool resolution: Use POOL_A/B if set, else resolve from TOKEN0/TOKEN1
     pool_addresses = []
@@ -477,24 +547,15 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
         )
         logger.info(f"Using manual pool token configuration for 0x9Ae18109...")
     
-    
-    # Calculate early-stop watermark
-    early_stop_watermark = 0
-    if settings.EARLY_STOP_MODE == "block":
-        early_stop_watermark = max(0, latest_block - settings.EARLY_STOP_LOOKBACK_BLOCKS)
-    elif settings.EARLY_STOP_MODE == "timestamp":
-        early_stop_watermark = max(0, int(time.time()) - settings.EARLY_STOP_LOOKBACK_SECS)
-    
-    logger.info(f"Early-stop watermark ({settings.EARLY_STOP_MODE}): {early_stop_watermark}")
-    
     # Try logs-first path if available
     rows = []
+    stats = {}
     used_logs_path = False
     
     if client.has_tool("get_logs"):
         logger.info("Using LOGS-FIRST path (get_logs available)")
         try:
-            rows = await fetch_and_process_logs(
+            rows, stats = await fetch_and_process_logs(
                 client=client,
                 pool_addresses=pool_addresses,
                 from_block=from_block,
@@ -502,8 +563,10 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
                 autoscout_base=settings.AUTOSCOUT_BASE or "https://eth-sepolia.blockscout.com",
                 dedupe=dedupe,
                 pool_tokens=pool_tokens,
-                early_stop_watermark=early_stop_watermark,
-                early_stop_mode=settings.EARLY_STOP_MODE
+                watermark_ts=watermark_ts,
+                watermark_block=watermark_block,
+                early_stop_mode=early_stop_mode,
+                max_pages=settings.MAX_PAGES_PER_CYCLE
             )
             used_logs_path = True
         except NotImplementedError:
@@ -513,14 +576,8 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
     if not used_logs_path:
         logger.info("Using TRANSACTION-BASED fallback path")
         # Determine time window (age-based for MCP API)
-        now = int(time.time())
-        age_to = now
-        age_from = now - (settings.WINDOW_MINUTES * 60)
-        
-        # Check if we should use last_seen_timestamp instead
-        last_seen_timestamp = state.get("last_seen_timestamp")
-        if last_seen_timestamp:
-            age_from = last_seen_timestamp
+        age_to = now_ts
+        age_from = watermark_ts if watermark_ts > 0 else now_ts - (settings.WINDOW_MINUTES * 60)
         
         logger.info(f"Time window: {age_from} to {age_to} ({settings.WINDOW_MINUTES} min window)")
         
@@ -532,6 +589,7 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
             autoscout_base=settings.AUTOSCOUT_BASE,
             dedupe=dedupe
         )
+        stats = {"total_logs_fetched": len(rows), "pages_fetched": 1}
     
     logger.info(f"✓ Produced {len(rows)} normalized rows (deduped)")
     
@@ -560,10 +618,17 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
                             row_a["delta_vs_other_pool"] = delta
                             row_b["delta_vs_other_pool"] = -delta  # Inverse for pool B
     
-    # Append to JSONL
+    # Append to JSONL with fsync
     if rows:
-        append_jsonl(jsonl_path, rows)
-        logger.info(f"✓ Appended to {jsonl_path}")
+        with open(jsonl_path, "a") as f:
+            for row in rows:
+                if USE_ORJSON:
+                    f.write(orjson.dumps(row).decode("utf-8") + "\n")
+                else:
+                    f.write(json.dumps(row) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        logger.info(f"✓ Appended {len(rows)} rows to {jsonl_path}")
     
     # Check if rotation is needed
     rotated = rotate_jsonl_if_needed(jsonl_path, settings.MAX_ROWS_PER_ROTATION)
@@ -573,14 +638,27 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
     update_metadata(metadata_path, total_rows, schema_version=settings.SCHEMA_VERSION)
     logger.info(f"✓ Updated metadata: {total_rows} rows")
     
-    # Update preview for Hosted Agent
-    update_preview(preview_path, jsonl_path, settings.PREVIEW_ROWS)
-    logger.info(f"✓ Updated preview: {preview_path}")
+    # Update preview for Hosted Agent and get latest timestamp
+    rows_after, preview_latest_ts = update_preview(preview_path, jsonl_path, settings.PREVIEW_ROWS)
+    logger.info(f"✓ Updated preview: {preview_path} (latest_ts={preview_latest_ts})")
     
-    # Update state
+    # Update state with new watermarks
+    new_last_seen_ts = max(
+        state.get("last_seen_ts", 0),
+        stats.get("max_ts_seen", 0),
+        preview_latest_ts,
+        now_ts
+    )
+    new_last_seen_block = max(
+        state.get("last_seen_block", 0),
+        stats.get("max_block_seen", 0),
+        to_block
+    )
+    
     new_state = {
-        "last_seen_timestamp": int(time.time()),
-        "last_block": to_block,
+        "last_seen_ts": new_last_seen_ts,
+        "last_seen_block": new_last_seen_block,
+        "last_published_ts": now_ts,
         "last_updated": datetime.utcnow().isoformat() + "Z",
         "used_logs_path": used_logs_path,
         "pool_tokens": pool_tokens  # Persist pool token cache
@@ -591,16 +669,29 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
     print("=" * 60)
     print("CYCLE SUMMARY")
     print("=" * 60)
+    print(f"  Strategy: {settings.WINDOW_STRATEGY.upper()}")
     print(f"  Data path: {'LOGS-FIRST' if used_logs_path else 'TRANSACTION-BASED'}")
+    if settings.WINDOW_STRATEGY == "timestamp":
+        print(f"  Watermark (timestamp): {watermark_ts} ({datetime.fromtimestamp(watermark_ts).isoformat()})")
+    else:
+        print(f"  Watermark (block): {watermark_block}")
     print(f"  Block range: {from_block} to {to_block}")
+    print(f"  Logs fetched: {stats.get('total_logs_fetched', 0)} across {stats.get('pages_fetched', 0)} pages")
     print(f"  Produced rows: {len(rows)}")
-    print(f"  Total rows in file: {total_rows}")
+    print(f"  Rows: {rows_before} -> {rows_after} (delta: +{rows_after - rows_before})")
+    print(f"  Preview latest timestamp: {preview_latest_ts} ({datetime.fromtimestamp(preview_latest_ts).isoformat() if preview_latest_ts > 0 else 'N/A'})")
+    print(f"  Early-stop triggered: {stats.get('early_stop_triggered', False)}")
+    if stats.get("early_stop_reason"):
+        print(f"  Early-stop reason: {stats['early_stop_reason']}")
     print(f"  Dedupe cache size: {len(dedupe.seen)}")
     print(f"  Rotated: {'Yes' if rotated else 'No'}")
-    print(f"  New last_block: {to_block}")
-    print(f"  JSONL path: {jsonl_path}")
-    print(f"  Metadata path: {metadata_path}")
-    print(f"  Preview path: {preview_path}")
+    print(f"  New state:")
+    print(f"    - last_seen_ts: {new_last_seen_ts}")
+    print(f"    - last_seen_block: {new_last_seen_block}")
+    print(f"  Files:")
+    print(f"    - JSONL: {jsonl_path}")
+    print(f"    - Metadata: {metadata_path}")
+    print(f"    - Preview: {preview_path}")
     print("=" * 60)
     print("")
     

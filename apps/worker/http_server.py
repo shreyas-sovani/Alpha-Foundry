@@ -56,7 +56,7 @@ class ReadOnlyHTTPServer:
             return web.json_response(
                 data,
                 headers={
-                    "Cache-Control": "max-age=15",
+                    "Cache-Control": "no-cache, max-age=5",
                     "Access-Control-Allow-Origin": "*",
                     "Access-Control-Allow-Methods": "GET",
                 }

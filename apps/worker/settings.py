@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     TOKEN1: Optional[str] = ""
     
     # Worker Behavior
-    WORKER_POLL_SECONDS: int = 300
+    WORKER_POLL_SECONDS: int = 30
     WORKER_HTTP_HOST: str = "0.0.0.0"
     WORKER_HTTP_PORT: int = 8787
     WINDOW_MINUTES: int = 5
@@ -29,11 +29,13 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     MCP_INIT_ON_START: bool = True
     
-    # Block range and early-stop controls
-    LOOKBACK_BLOCKS: int = 50  # Default block range for initial sync
-    EARLY_STOP_MODE: Literal["block", "timestamp"] = "block"
-    EARLY_STOP_LOOKBACK_BLOCKS: int = 5000
-    EARLY_STOP_LOOKBACK_SECS: int = 1800
+    # Windowing Strategy
+    WINDOW_STRATEGY: Literal["timestamp", "block"] = "timestamp"
+    BLOCK_LOOKBACK: int = 500  # For block strategy
+    MAX_PAGES_PER_CYCLE: int = 10  # Limit pagination depth
+    
+    # Early-stop controls (derived from WINDOW_STRATEGY by default)
+    EARLY_STOP_MODE: Optional[Literal["block", "timestamp"]] = None  # Auto-match WINDOW_STRATEGY if None
     
     # State & Cache Paths
     LAST_BLOCK_STATE_PATH: str = "state/last_block.json"
@@ -93,9 +95,11 @@ class Settings(BaseSettings):
         print(f"  DEX_POOL_B: {self._redact_address(self.DEX_POOL_B) if self.DEX_POOL_B else '[NOT SET]'}")
         print(f"  TOKEN0: {self._redact_address(self.TOKEN0) if self.TOKEN0 else '[NOT SET]'}")
         print(f"  TOKEN1: {self._redact_address(self.TOKEN1) if self.TOKEN1 else '[NOT SET]'}")
-        print(f"  EARLY_STOP_MODE: {self.EARLY_STOP_MODE}")
-        print(f"  EARLY_STOP_LOOKBACK_BLOCKS: {self.EARLY_STOP_LOOKBACK_BLOCKS}")
-        print(f"  EARLY_STOP_LOOKBACK_SECS: {self.EARLY_STOP_LOOKBACK_SECS}s")
+        print(f"  WINDOW_STRATEGY: {self.WINDOW_STRATEGY}")
+        print(f"  WINDOW_MINUTES: {self.WINDOW_MINUTES}")
+        print(f"  BLOCK_LOOKBACK: {self.BLOCK_LOOKBACK}")
+        print(f"  MAX_PAGES_PER_CYCLE: {self.MAX_PAGES_PER_CYCLE}")
+        print(f"  EARLY_STOP_MODE: {self.EARLY_STOP_MODE or self.WINDOW_STRATEGY} (auto)")
         print(f"  WORKER_POLL_SECONDS: {self.WORKER_POLL_SECONDS}")
         print(f"  WINDOW_MINUTES: {self.WINDOW_MINUTES}")
         print(f"  Cache Paths:")

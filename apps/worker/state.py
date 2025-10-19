@@ -1,8 +1,16 @@
 """State persistence helpers for checkpoint management."""
-import json
-import os
+import logging
 from pathlib import Path
 from typing import Any, Dict
+
+try:
+    import orjson
+    USE_ORJSON = True
+except ImportError:
+    import json
+    USE_ORJSON = False
+
+logger = logging.getLogger(__name__)
 
 
 def read_state(path: str) -> Dict[str, Any]:
@@ -21,16 +29,19 @@ def read_state(path: str) -> Dict[str, Any]:
         return {}
     
     try:
-        with open(path_obj, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        print(f"Warning: Failed to read state from {path}: {e}")
+        with open(path_obj, "rb" if USE_ORJSON else "r") as f:
+            if USE_ORJSON:
+                return orjson.loads(f.read())
+            else:
+                return json.load(f)
+    except (ValueError, IOError) as e:
+        logger.warning(f"Failed to read state from {path}: {e}")
         return {}
 
 
 def write_state(path: str, obj: Dict[str, Any]) -> None:
     """
-    Write state to JSON file.
+    Write state to JSON file using orjson for speed.
     
     Args:
         path: Path to state file
@@ -42,8 +53,11 @@ def write_state(path: str, obj: Dict[str, Any]) -> None:
     path_obj.parent.mkdir(parents=True, exist_ok=True)
     
     try:
-        with open(path_obj, "w") as f:
-            json.dump(obj, f, indent=2)
+        with open(path_obj, "wb" if USE_ORJSON else "w") as f:
+            if USE_ORJSON:
+                f.write(orjson.dumps(obj, option=orjson.OPT_INDENT_2))
+            else:
+                json.dump(obj, f, indent=2)
     except IOError as e:
-        print(f"Error: Failed to write state to {path}: {e}")
+        logger.error(f"Failed to write state to {path}: {e}")
         raise

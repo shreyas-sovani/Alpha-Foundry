@@ -23,6 +23,7 @@ from blockscout_rest import BlockscoutRESTClient, get_rest_client_from_env
 from transform import normalize_tx, normalize_log_to_swap, compute_price_delta
 from state import read_state, write_state, DedupeTracker, RollingPriceBuffer, PreviewStateTracker
 from http_server import ReadOnlyHTTPServer
+from chainlink_price import fetch_eth_price_from_chainlink, infer_eth_price_from_swaps
 
 
 # Load environment variables
@@ -792,6 +793,43 @@ async def run_cycle(
         logger.warning("Skipping this cycle")
         return state
     
+    # Fetch ETH/USD price from Chainlink or infer from recent swaps
+    eth_price_info = await fetch_eth_price_from_chainlink(
+        chain_id=settings.CHAIN_ID,
+        client=client,
+        fallback_price=settings.REFERENCE_ETH_PRICE_USD
+    )
+    eth_price_usd = eth_price_info["price"]
+    
+    # If using fallback, try to infer from recent swaps
+    if eth_price_info["source"].startswith("fallback") and jsonl_path.exists():
+        try:
+            with open(jsonl_path, "r") as f:
+                recent_lines = f.readlines()[-50:]  # Last 50 swaps
+                if USE_ORJSON:
+                    recent_swaps = [orjson.loads(line) for line in recent_lines]
+                else:
+                    recent_swaps = [json.loads(line) for line in recent_lines]
+                inferred_price = infer_eth_price_from_swaps(recent_swaps)
+                
+                if inferred_price:
+                    eth_price_usd = inferred_price
+                    logger.info(f"ETH price: ${eth_price_usd:.2f} (source: inferred_from_swaps)")
+                else:
+                    logger.warning(f"ETH price: ${eth_price_usd:.2f} (source: {eth_price_info['source']}) - {eth_price_info.get('warning', 'No warning')}")
+        except Exception as e:
+            logger.warning(f"Could not infer ETH price from swaps: {e}")
+            logger.warning(f"ETH price: ${eth_price_usd:.2f} (source: {eth_price_info['source']})")
+    else:
+        # Log price source
+        if eth_price_info.get("warning"):
+            logger.warning(f"ETH price: ${eth_price_usd:.2f} (source: {eth_price_info['source']}) - {eth_price_info['warning']}")
+        else:
+            logger.info(f"ETH price: ${eth_price_usd:.2f} (source: {eth_price_info['source']})")
+    
+    if eth_price_info["feed_address"]:
+        logger.debug(f"Chainlink feed address: {eth_price_info['feed_address']}")
+    
     # Determine windowing strategy and watermark
     early_stop_mode = settings.EARLY_STOP_MODE or settings.WINDOW_STRATEGY
     now_ts = int(time.time())
@@ -971,7 +1009,7 @@ async def run_cycle(
         preview_state=preview_state,
         pool_addresses=pool_addresses,
         window_minutes=settings.WINDOW_MINUTES,
-        eth_price_usd=settings.REFERENCE_ETH_PRICE_USD,
+        eth_price_usd=eth_price_usd,  # Use live/inferred price instead of static
         autoscout_base=settings.AUTOSCOUT_BASE or "https://eth-sepolia.blockscout.com",
         client=client,
         enable_emoji=settings.ENABLE_EMOJI_MARKERS,

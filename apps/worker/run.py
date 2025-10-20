@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from settings import Settings
 from blockscout_rest import BlockscoutRESTClient, get_rest_client_from_env
 from transform import normalize_tx, normalize_log_to_swap, compute_price_delta
-from state import read_state, write_state, DedupeTracker
+from state import read_state, write_state, DedupeTracker, RollingPriceBuffer, PreviewStateTracker
 from http_server import ReadOnlyHTTPServer
 
 
@@ -40,6 +40,125 @@ logger = logging.getLogger(__name__)
 
 # Global HTTP server instance for cleanup
 http_server: Optional[ReadOnlyHTTPServer] = None
+
+
+def compute_gas_context(log: Dict[str, Any], client) -> Dict[str, Any]:
+    """
+    Extract gas context from transaction receipt.
+    
+    Returns dict with gas_used, effective_gas_price_gwei, gas_cost_eth.
+    """
+    gas_context = {
+        "gas_used": 0,
+        "effective_gas_price_gwei": 0.0,
+        "gas_cost_eth": 0.0
+    }
+    
+    # In a full implementation, we would fetch the transaction receipt
+    # For now, return placeholder values
+    # TODO: Implement via client.get_transaction_receipt(tx_hash)
+    
+    return gas_context
+
+
+def estimate_usd_value(
+    token_in_symbol: str,
+    token_out_symbol: str,
+    amount_in_normalized: str,
+    amount_out_normalized: str,
+    eth_price_usd: float
+) -> Dict[str, Any]:
+    """
+    Estimate USD value of swap using stablecoin detection or ETH reference price.
+    
+    Returns dict with swap_value_usd and value_method (e.g., "USDC", "WETH_est", etc.)
+    """
+    stablecoins = {"USDC", "USDCE", "USDT", "DAI"}
+    
+    # Check if token_in is a stablecoin
+    if token_in_symbol in stablecoins:
+        try:
+            value = float(amount_in_normalized)
+            return {"swap_value_usd": value, "value_method": token_in_symbol}
+        except:
+            pass
+    
+    # Check if token_out is a stablecoin
+    if token_out_symbol in stablecoins:
+        try:
+            value = float(amount_out_normalized)
+            return {"swap_value_usd": value, "value_method": token_out_symbol}
+        except:
+            pass
+    
+    # Check for WETH and estimate using reference price
+    if token_in_symbol in {"WETH", "ETH"}:
+        try:
+            eth_amount = float(amount_in_normalized)
+            value = eth_amount * eth_price_usd
+            return {"swap_value_usd": value, "value_method": "WETH_est"}
+        except:
+            pass
+    
+    if token_out_symbol in {"WETH", "ETH"}:
+        try:
+            eth_amount = float(amount_out_normalized)
+            value = eth_amount * eth_price_usd
+            return {"swap_value_usd": value, "value_method": "WETH_est"}
+        except:
+            pass
+    
+    return {"swap_value_usd": 0.0, "value_method": "unknown"}
+
+
+def enrich_row_with_analytics(
+    row: Dict[str, Any],
+    price_buffer: RollingPriceBuffer,
+    eth_price_usd: float,
+    client
+) -> Dict[str, Any]:
+    """
+    Enrich a swap row with micro-analytics.
+    
+    Adds:
+    - delta_vs_ma: Price delta vs 5-swap moving average
+    - gas_used, effective_gas_price_gwei, gas_cost_eth, gas_cost_usd
+    - swap_value_usd, value_method
+    """
+    enriched = row.copy()
+    
+    # Compute delta vs moving average
+    pool_id = row.get("pool_id", "")
+    normalized_price = row.get("normalized_price")
+    
+    if normalized_price and pool_id:
+        ma5 = price_buffer.get_moving_average(pool_id, window=5)
+        if ma5 > 0:
+            delta_vs_ma = ((normalized_price - ma5) / ma5) * 100.0
+            enriched["delta_vs_ma"] = round(delta_vs_ma, 2)
+        else:
+            enriched["delta_vs_ma"] = 0.0
+    else:
+        enriched["delta_vs_ma"] = 0.0
+    
+    # Gas context (placeholder for now)
+    gas_context = compute_gas_context(row, client)
+    enriched.update(gas_context)
+    
+    # Gas cost in USD
+    enriched["gas_cost_usd"] = round(gas_context["gas_cost_eth"] * eth_price_usd, 2)
+    
+    # USD value estimate
+    usd_estimate = estimate_usd_value(
+        row.get("token_in_symbol", ""),
+        row.get("token_out_symbol", ""),
+        row.get("amount_in_normalized", "0"),
+        row.get("amount_out_normalized", "0"),
+        eth_price_usd
+    )
+    enriched.update(usd_estimate)
+    
+    return enriched
 
 
 async def fetch_and_process_logs(
@@ -385,22 +504,50 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
         raise
 
 
-def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) -> tuple[int, int]:
+def update_preview_with_analytics(
+    preview_path: Path,
+    jsonl_path: Path,
+    preview_rows: int,
+    price_buffer: RollingPriceBuffer,
+    preview_state: PreviewStateTracker,
+    pool_addresses: List[str],
+    window_minutes: int,
+    eth_price_usd: float,
+    autoscout_base: str,
+    client
+) -> tuple[int, int]:
     """
-    Update preview.json with latest N rows for Hosted Agent.
+    Update preview.json with latest N rows and dynamic header metrics.
+    
+    Implements:
+    - Sort by timestamp desc (newest first)
+    - Bias selection toward new tx_hashes
+    - Header with updated_ago_seconds, activity_swaps_per_min, spread_percent
+    - Enriched rows with delta_vs_ma, gas context, USD estimates
     
     Returns:
         Tuple of (total_rows, latest_timestamp)
     """
+    now_utc = datetime.utcnow()
+    now_ts = int(time.time())
+    
     if not jsonl_path.exists():
         preview = {
+            "header": {
+                "updated_ago_seconds": 0,
+                "window_minutes": window_minutes,
+                "activity_swaps_per_min": 0.0,
+                "pool_ids": pool_addresses,
+                "spread_percent": None,
+                "spread_reason": "no data"
+            },
             "preview_rows": [],
             "total_rows": 0,
-            "last_updated": datetime.utcnow().isoformat() + "Z"
+            "last_updated": now_utc.isoformat() + "Z"
         }
         latest_ts = 0
     else:
-        # Read last N rows efficiently (read from end if file is large)
+        # Read all rows from JSONL
         rows = []
         with open(jsonl_path, "r") as f:
             for line in f:
@@ -414,16 +561,87 @@ def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) 
                     except:
                         pass
         
-        # Take last N rows (most recent)
-        preview_rows_data = rows[-preview_rows:] if len(rows) > preview_rows else rows
+        # Sort by timestamp desc (newest first)
+        rows.sort(key=lambda r: r.get("timestamp", 0), reverse=True)
+        
+        # Bias selection: prefer new tx_hashes
+        new_rows = [r for r in rows if preview_state.is_new(r.get("tx_hash", ""))]
+        
+        # Select at least K=2 new rows if available, otherwise newest rows
+        min_new = 2
+        if len(new_rows) >= min_new:
+            selected = new_rows[:preview_rows]
+        else:
+            # Mix new and newest
+            selected = new_rows + [r for r in rows if r not in new_rows]
+            selected = selected[:preview_rows]
+        
+        # Enrich selected rows with analytics
+        enriched_rows = []
+        for row in selected:
+            enriched = enrich_row_with_analytics(row, price_buffer, eth_price_usd, client)
+            enriched_rows.append(enriched)
+        
+        # Update preview state tracker
+        preview_tx_hashes = [r.get("tx_hash", "") for r in enriched_rows]
+        preview_state.update(preview_tx_hashes)
         
         # Get latest timestamp
-        latest_ts = max((row.get("timestamp", 0) for row in preview_rows_data), default=0)
+        latest_ts = max((row.get("timestamp", 0) for row in enriched_rows), default=0)
+        
+        # Compute header metrics
+        updated_ago_seconds = now_ts - latest_ts if latest_ts > 0 else 0
+        
+        # Activity: swaps per minute over window
+        cutoff_ts = now_ts - (window_minutes * 60)
+        recent_swaps = [r for r in rows if r.get("timestamp", 0) >= cutoff_ts]
+        
+        if recent_swaps and len(recent_swaps) > 1:
+            time_span = max(r.get("timestamp", 0) for r in recent_swaps) - min(r.get("timestamp", 0) for r in recent_swaps)
+            if time_span > 0:
+                activity_swaps_per_min = (len(recent_swaps) / time_span) * 60.0
+            else:
+                activity_swaps_per_min = 0.0
+        else:
+            activity_swaps_per_min = 0.0
+        
+        # Spread: compute price difference between pools
+        spread_percent = None
+        spread_reason = None
+        
+        if len(pool_addresses) == 2:
+            price_a = price_buffer.get_latest_price(pool_addresses[0], max_age_seconds=600)
+            price_b = price_buffer.get_latest_price(pool_addresses[1], max_age_seconds=600)
+            
+            if price_a > 0 and price_b > 0:
+                spread_percent = ((price_a - price_b) / price_b) * 100.0
+                spread_percent = round(spread_percent, 2)
+            elif price_a == 0 and price_b == 0:
+                spread_reason = "no recent prices for either pool"
+            elif price_a == 0:
+                spread_reason = "no recent price for pool A"
+            elif price_b == 0:
+                spread_reason = "no recent price for pool B"
+        else:
+            spread_reason = "requires exactly 2 pools"
+        
+        # Build header
+        header = {
+            "updated_ago_seconds": updated_ago_seconds,
+            "window_minutes": window_minutes,
+            "activity_swaps_per_min": round(activity_swaps_per_min, 2),
+            "pool_ids": pool_addresses,
+            "spread_percent": spread_percent
+        }
+        
+        if spread_reason:
+            header["spread_reason"] = spread_reason
         
         preview = {
-            "preview_rows": preview_rows_data,
+            "header": header,
+            "preview_rows": enriched_rows,
             "total_rows": len(rows),
-            "last_updated": datetime.utcnow().isoformat() + "Z"
+            "last_updated": now_utc.isoformat() + "Z"
         }
     
     # Atomic write with temp file + rename + fsync
@@ -449,7 +667,14 @@ def update_preview(preview_path: Path, jsonl_path: Path, preview_rows: int = 5) 
     return len(rows) if jsonl_path.exists() else 0, latest_ts
 
 
-async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dict[str, Any], dedupe: DedupeTracker) -> Dict[str, Any]:
+async def run_cycle(
+    client: BlockscoutRESTClient,
+    settings: Settings,
+    state: Dict[str, Any],
+    dedupe: DedupeTracker,
+    price_buffer: RollingPriceBuffer,
+    preview_state: PreviewStateTracker
+) -> Dict[str, Any]:
     """
     Run one ingestion cycle with logs-first path, pool resolution, and early-stop guards.
     
@@ -618,6 +843,15 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
                             row_a["delta_vs_other_pool"] = delta
                             row_b["delta_vs_other_pool"] = -delta  # Inverse for pool B
     
+    # Update rolling price buffer with new rows
+    for row in rows:
+        normalized_price = row.get("normalized_price")
+        pool_id = row.get("pool_id", "")
+        timestamp = row.get("timestamp", 0)
+        
+        if normalized_price and pool_id and timestamp:
+            price_buffer.add_price(pool_id, normalized_price, timestamp)
+    
     # Append to JSONL with fsync
     if rows:
         with open(jsonl_path, "a") as f:
@@ -638,9 +872,34 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
     update_metadata(metadata_path, total_rows, schema_version=settings.SCHEMA_VERSION)
     logger.info(f"✓ Updated metadata: {total_rows} rows")
     
-    # Update preview for Hosted Agent and get latest timestamp
-    rows_after, preview_latest_ts = update_preview(preview_path, jsonl_path, settings.PREVIEW_ROWS)
+    # Update preview with analytics
+    rows_after, preview_latest_ts = update_preview_with_analytics(
+        preview_path=preview_path,
+        jsonl_path=jsonl_path,
+        preview_rows=settings.PREVIEW_ROWS,
+        price_buffer=price_buffer,
+        preview_state=preview_state,
+        pool_addresses=pool_addresses,
+        window_minutes=settings.WINDOW_MINUTES,
+        eth_price_usd=settings.REFERENCE_ETH_PRICE_USD,
+        autoscout_base=settings.AUTOSCOUT_BASE or "https://eth-sepolia.blockscout.com",
+        client=client
+    )
     logger.info(f"✓ Updated preview: {preview_path} (latest_ts={preview_latest_ts})")
+    
+    # Read preview to get header for summary
+    preview_header = {}
+    sample_row = {}
+    if preview_path.exists():
+        try:
+            with open(preview_path, "r") as f:
+                preview_data = json.load(f) if not USE_ORJSON else orjson.loads(f.read())
+                preview_header = preview_data.get("header", {})
+                preview_rows_list = preview_data.get("preview_rows", [])
+                if preview_rows_list:
+                    sample_row = preview_rows_list[0]
+        except Exception as e:
+            logger.warning(f"Could not read preview header: {e}")
     
     # Update state with new watermarks
     new_last_seen_ts = max(
@@ -692,6 +951,28 @@ async def run_cycle(client: BlockscoutRESTClient, settings: Settings, state: Dic
     print(f"    - JSONL: {jsonl_path}")
     print(f"    - Metadata: {metadata_path}")
     print(f"    - Preview: {preview_path}")
+    print("")
+    print("PREVIEW HEADER:")
+    print(f"  updated_ago_seconds: {preview_header.get('updated_ago_seconds', 'N/A')}")
+    print(f"  window_minutes: {preview_header.get('window_minutes', 'N/A')}")
+    print(f"  activity_swaps_per_min: {preview_header.get('activity_swaps_per_min', 'N/A')}")
+    print(f"  pool_ids: {preview_header.get('pool_ids', [])}")
+    print(f"  spread_percent: {preview_header.get('spread_percent', 'N/A')}")
+    if preview_header.get('spread_reason'):
+        print(f"  spread_reason: {preview_header.get('spread_reason')}")
+    print("")
+    if sample_row:
+        print("SAMPLE ENRICHED ROW:")
+        print(f"  tx_hash: {sample_row.get('tx_hash', 'N/A')[:16]}...")
+        print(f"  timestamp: {sample_row.get('timestamp', 'N/A')}")
+        print(f"  normalized_price: {sample_row.get('normalized_price', 'N/A')}")
+        print(f"  delta_vs_ma: {sample_row.get('delta_vs_ma', 'N/A')}%")
+        print(f"  gas_used: {sample_row.get('gas_used', 'N/A')}")
+        print(f"  effective_gas_price_gwei: {sample_row.get('effective_gas_price_gwei', 'N/A')}")
+        print(f"  gas_cost_eth: {sample_row.get('gas_cost_eth', 'N/A')}")
+        print(f"  gas_cost_usd: ${sample_row.get('gas_cost_usd', 'N/A')}")
+        print(f"  swap_value_usd: ${sample_row.get('swap_value_usd', 'N/A')} ({sample_row.get('value_method', 'N/A')})")
+        print(f"  explorer_link: {sample_row.get('explorer_link', 'N/A')[:60]}...")
     print("=" * 60)
     print("")
     
@@ -788,6 +1069,14 @@ def main():
     dedupe_path = Path(settings.LAST_BLOCK_STATE_PATH).parent / "dedupe.json"
     dedupe = DedupeTracker.load(str(dedupe_path))
     
+    # Load price buffer for moving averages
+    price_buffer_path = Path(settings.LAST_BLOCK_STATE_PATH).parent / "price_buffer.json"
+    price_buffer = RollingPriceBuffer.load(str(price_buffer_path), max_size=20)
+    
+    # Load preview state tracker
+    preview_state_path = Path(settings.LAST_BLOCK_STATE_PATH).parent / "preview_state.json"
+    preview_state = PreviewStateTracker.load(str(preview_state_path), max_size=10)
+    
     # Print dry-run summary
     print("")
     print("=" * 60)
@@ -817,18 +1106,26 @@ def main():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    state = loop.run_until_complete(run_cycle(client, settings, state, dedupe))
+                    state = loop.run_until_complete(run_cycle(
+                        client, settings, state, dedupe, price_buffer, preview_state
+                    ))
                     # Close client to prepare for next event loop
                     loop.run_until_complete(client.close())
                 finally:
                     loop.close()
                 
-                # Persist state and dedupe
+                # Persist state, dedupe, price buffer, and preview state
                 write_state(settings.LAST_BLOCK_STATE_PATH, state)
                 logger.info(f"✓ State saved to {settings.LAST_BLOCK_STATE_PATH}")
                 
                 dedupe.save(str(dedupe_path))
                 logger.debug(f"✓ Dedupe saved to {dedupe_path}")
+                
+                price_buffer.save(str(price_buffer_path))
+                logger.debug(f"✓ Price buffer saved to {price_buffer_path}")
+                
+                preview_state.save(str(preview_state_path))
+                logger.debug(f"✓ Preview state saved to {preview_state_path}")
                 
             except KeyboardInterrupt:
                 raise
@@ -841,8 +1138,10 @@ def main():
     except KeyboardInterrupt:
         logger.info("Received interrupt, shutting down...")
     finally:
-        # Save dedupe one last time
+        # Save state one last time
         dedupe.save(str(dedupe_path))
+        price_buffer.save(str(price_buffer_path))
+        preview_state.save(str(preview_state_path))
         
         # Close client
         loop = asyncio.new_event_loop()

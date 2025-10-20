@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Schema
     SCHEMA_VERSION: str = "1.1"
     
+    # Reference price for USD estimates
+    REFERENCE_ETH_PRICE_USD: float = 2500.0
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
@@ -102,6 +105,8 @@ class Settings(BaseSettings):
         print(f"  EARLY_STOP_MODE: {self.EARLY_STOP_MODE or self.WINDOW_STRATEGY} (auto)")
         print(f"  WORKER_POLL_SECONDS: {self.WORKER_POLL_SECONDS}")
         print(f"  WINDOW_MINUTES: {self.WINDOW_MINUTES}")
+        print(f"  PREVIEW_ROWS: {self.PREVIEW_ROWS}")
+        print(f"  REFERENCE_ETH_PRICE_USD: ${self.REFERENCE_ETH_PRICE_USD}")
         print(f"  Cache Paths:")
         print(f"    - Decimals: {self.DECIMALS_CACHE_PATH}")
         print(f"    - Block→TS: {self.BLOCK_TS_CACHE_PATH}")

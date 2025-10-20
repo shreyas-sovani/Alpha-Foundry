@@ -24,17 +24,32 @@ def extract_pool_tokens(pool_address: str, dex_type: str, client) -> Tuple[Optio
     Returns:
         (token0_address, token1_address) or (None, None) if unavailable
     
-    Note: For now, this is a stub that returns None. Full implementation
-    would query the pool contract via Blockscout's smart contract read API
-    or use eth_call to invoke token0() and token1() view functions.
-    
-    Workaround: Configure TOKEN0/TOKEN1 in settings and manually set pool_tokens
-    cache in state, or use the pool address directly if tokens are known.
+    Note: Hardcoded for known Ethereum Mainnet Uniswap V3 pools.
+    Full implementation would use eth_call to token0()/token1().
     """
-    # Stub implementation - return None to skip pool token resolution
-    # This prevents errors while we wait for full eth_call integration
-    logger.debug(f"Pool token resolution not yet implemented for {pool_address[:8]}...")
-    return (None, None)
+    # Hardcoded pool tokens for Ethereum Mainnet Uniswap V3
+    KNOWN_POOLS = {
+        # USDC/WETH 0.05% (highest liquidity V3 pool)
+        "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640": (
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC (token0)
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH (token1)
+        ),
+        # WETH/USDT 0.05%
+        "0x11b815efb8f581194ae79006d24e0d814b7697f6": (
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH (token0)
+            "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT (token1)
+        ),
+    }
+    
+    pool_key = pool_address.lower()
+    tokens = KNOWN_POOLS.get(pool_key)
+    
+    if tokens:
+        logger.debug(f"Resolved tokens for pool {pool_address[:8]}: {tokens[0][:8]}, {tokens[1][:8]}")
+        return tokens
+    else:
+        logger.warning(f"Unknown pool {pool_address[:8]}, cannot resolve tokens")
+        return (None, None)
 
 
 def normalize_amounts(raw_in: str, raw_out: str, decimals_in: int, decimals_out: int) -> Tuple[str, str]:
@@ -268,15 +283,17 @@ def decode_swap_event(log: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         Decoded event dict or None if not a known swap event
     """
     if not HAS_ETH_ABI:
-        logger.debug("eth_abi not available, skipping event decoding")
+        logger.warning("eth_abi not available, skipping event decoding")
         return None
     
     topics = log.get("topics") or []
     if not topics:
+        logger.debug(f"Log has no topics: {log.get('transaction_hash', 'unknown')[:10]}")
         return None
     
     topic0 = topics[0] if isinstance(topics[0], str) else None
     if not topic0:
+        logger.debug(f"Topic0 is not a string: {type(topics[0])}")
         return None
     
     # Normalize topic0 to lowercase with 0x prefix
@@ -286,8 +303,10 @@ def decode_swap_event(log: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     
     signature = SWAP_EVENT_SIGNATURES.get(topic0)
     if not signature:
-        logger.debug(f"Unknown event signature: {topic0}")
+        logger.warning(f"Unknown event signature: {topic0} (tx: {log.get('transaction_hash', 'unknown')[:10]})")
         return None
+    
+    logger.debug(f"Matched signature: {signature['name']} for topic0: {topic0}")
     
     try:
         # Extract indexed and non-indexed parameters
@@ -362,9 +381,15 @@ async def normalize_log_to_swap(
     Returns:
         Normalized swap row with real token addresses, symbols, decimals, or None
     """
+    tx_hash = log.get("transaction_hash") or log.get("transactionHash") or ""
+    logger.debug(f"normalize_log_to_swap called for tx {tx_hash[:10]}...")
+    
     decoded = decode_swap_event(log)
     if not decoded:
+        logger.debug(f"decode_swap_event returned None for tx {tx_hash[:10]}")
         return None
+    
+    logger.debug(f"Decoded event: {decoded['event_name']} with {len(decoded['values'])} values")
     
     # Extract transaction details
     tx_hash = log.get("transaction_hash") or log.get("transactionHash") or ""
@@ -404,16 +429,42 @@ async def normalize_log_to_swap(
     
     # Parse swap event based on signature
     values = decoded["values"]
+    event_name = decoded.get("event_name", "Swap")
     
-    # For Uniswap V2: (sender, amount0In, amount1In, amount0Out, amount1Out, to)
-    # Determine which direction the swap went
+    # Determine swap direction based on event format
     token_in_addr = None
     token_out_addr = None
     amount_in = "0"
     amount_out = "0"
     
-    if len(values) >= 5:
-        # Check which amounts are non-zero
+    logger.debug(f"Processing {len(values)} values, event={event_name}, token0={token0[:8]}, token1={token1[:8]}")
+    
+    # Uniswap V3 Swap: (sender, recipient, amount0, amount1, sqrtPriceX96, liquidity, tick)
+    # amount0 and amount1 are int256: negative = out, positive = in
+    if len(values) == 7 and event_name == "Swap":
+        # V3 format
+        logger.debug(f"Using V3 format, values[2]={values[2]}, values[3]={values[3]}")
+        amount0 = int(values[2]) if len(values) > 2 else 0
+        amount1 = int(values[3]) if len(values) > 3 else 0
+        
+        logger.debug(f"V3 amounts: amount0={amount0}, amount1={amount1}")
+        
+        if amount0 < 0 and amount1 > 0:
+            # Swapping token1 for token0 (token0 is output, token1 is input)
+            amount_in = str(abs(amount1))
+            amount_out = str(abs(amount0))
+            token_in_addr = token1
+            token_out_addr = token0
+        elif amount1 < 0 and amount0 > 0:
+            # Swapping token0 for token1 (token1 is output, token0 is input)
+            amount_in = str(abs(amount0))
+            amount_out = str(abs(amount1))
+            token_in_addr = token0
+            token_out_addr = token1
+    
+    # Uniswap V2 Swap: (sender, amount0In, amount1In, amount0Out, amount1Out, to)
+    elif len(values) >= 5:
+        # V2 format
         amount0_in = int(values[1]) if len(values) > 1 and values[1] else 0
         amount1_in = int(values[2]) if len(values) > 2 and values[2] else 0
         amount0_out = int(values[3]) if len(values) > 3 and values[3] else 0
@@ -433,7 +484,7 @@ async def normalize_log_to_swap(
             token_out_addr = token0
     
     if not token_in_addr or not token_out_addr:
-        logger.warning(f"Cannot determine swap direction for tx {tx_hash[:8]}...")
+        logger.warning(f"Cannot determine swap direction for tx {tx_hash[:8]}: token_in={token_in_addr}, token_out={token_out_addr}, len(values)={len(values)}, event={event_name}")
         return None
     
     # Fetch token metadata

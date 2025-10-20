@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     BLOCKSCOUT_MCP_BASE: str
     AUTOSCOUT_BASE: Optional[str] = ""
     CHAIN_ID: int
+    NETWORK_LABEL: Optional[str] = "Ethereum Mainnet"  # NEW: Human-readable network name
     
     # DEX Configuration
     DEX_TYPE: Literal["v2", "v3"] = "v2"
@@ -19,20 +20,20 @@ class Settings(BaseSettings):
     TOKEN0: Optional[str] = ""
     TOKEN1: Optional[str] = ""
     
-    # Worker Behavior
-    WORKER_POLL_SECONDS: int = 30
+    # Worker Behavior - OPTIMIZED FOR DEMO
+    WORKER_POLL_SECONDS: int = 15  # CHANGED: 30->15 for faster refresh
     WORKER_HTTP_HOST: str = "0.0.0.0"
     WORKER_HTTP_PORT: int = 8787
-    WINDOW_MINUTES: int = 5
+    WINDOW_MINUTES: int = 2  # CHANGED: 5->2 for tighter, more dynamic window
     MAX_ROWS_PER_ROTATION: int = 1000
-    PREVIEW_ROWS: int = 5
+    PREVIEW_ROWS: int = 8  # CHANGED: 5->8 for richer preview
     LOG_LEVEL: str = "INFO"
     MCP_INIT_ON_START: bool = True
     
-    # Windowing Strategy
+    # Windowing Strategy - OPTIMIZED FOR DEMO
     WINDOW_STRATEGY: Literal["timestamp", "block"] = "timestamp"
-    BLOCK_LOOKBACK: int = 500  # For block strategy
-    MAX_PAGES_PER_CYCLE: int = 10  # Limit pagination depth
+    BLOCK_LOOKBACK: int = 100  # CHANGED: 500->100 for faster catchup
+    MAX_PAGES_PER_CYCLE: int = 5  # CHANGED: 10->5 to avoid rate limits on live mainnet
     
     # Early-stop controls (derived from WINDOW_STRATEGY by default)
     EARLY_STOP_MODE: Optional[Literal["block", "timestamp"]] = None  # Auto-match WINDOW_STRATEGY if None
@@ -50,6 +51,14 @@ class Settings(BaseSettings):
     
     # Reference price for USD estimates
     REFERENCE_ETH_PRICE_USD: float = 2500.0
+    
+    # Pool Activity Validation - NEW
+    MIN_SWAPS_PER_CYCLE: int = 1  # Warn if fewer swaps than this
+    STALE_THRESHOLD_SECONDS: int = 300  # Alert if no new data in 5 minutes
+    
+    # Visual Enhancements - NEW
+    ENABLE_EMOJI_MARKERS: bool = True  # Add visual markers to new swaps
+    ENABLE_SPREAD_ALERTS: bool = True  # Highlight arbitrage opportunities
     
     class Config:
         env_file = ".env"
@@ -88,31 +97,37 @@ class Settings(BaseSettings):
     
     def print_redacted(self):
         """Print configuration with sensitive values redacted."""
-        print("=" * 60)
-        print(f"Worker Configuration v{self.SCHEMA_VERSION}:")
+        print("=" * 70)
+        print(f"🚀 DEX ARBITRAGE WORKER v{self.SCHEMA_VERSION} - HACKATHON OPTIMIZED")
+        print("=" * 70)
+        print(f"  Network: {self.NETWORK_LABEL or 'Unknown'} (Chain ID: {self.CHAIN_ID})")
         print(f"  BLOCKSCOUT_MCP_BASE: {self._redact_url(self.BLOCKSCOUT_MCP_BASE)}")
         print(f"  AUTOSCOUT_BASE: {self._redact_url(self.AUTOSCOUT_BASE) if self.AUTOSCOUT_BASE else '[NOT SET]'}")
-        print(f"  CHAIN_ID: {self.CHAIN_ID}")
         print(f"  DEX_TYPE: {self.DEX_TYPE}")
         print(f"  DEX_POOL_A: {self._redact_address(self.DEX_POOL_A) if self.DEX_POOL_A else '[NOT SET]'}")
         print(f"  DEX_POOL_B: {self._redact_address(self.DEX_POOL_B) if self.DEX_POOL_B else '[NOT SET]'}")
         print(f"  TOKEN0: {self._redact_address(self.TOKEN0) if self.TOKEN0 else '[NOT SET]'}")
         print(f"  TOKEN1: {self._redact_address(self.TOKEN1) if self.TOKEN1 else '[NOT SET]'}")
-        print(f"  WINDOW_STRATEGY: {self.WINDOW_STRATEGY}")
-        print(f"  WINDOW_MINUTES: {self.WINDOW_MINUTES}")
-        print(f"  BLOCK_LOOKBACK: {self.BLOCK_LOOKBACK}")
-        print(f"  MAX_PAGES_PER_CYCLE: {self.MAX_PAGES_PER_CYCLE}")
-        print(f"  EARLY_STOP_MODE: {self.EARLY_STOP_MODE or self.WINDOW_STRATEGY} (auto)")
-        print(f"  WORKER_POLL_SECONDS: {self.WORKER_POLL_SECONDS}")
-        print(f"  WINDOW_MINUTES: {self.WINDOW_MINUTES}")
-        print(f"  PREVIEW_ROWS: {self.PREVIEW_ROWS}")
-        print(f"  REFERENCE_ETH_PRICE_USD: ${self.REFERENCE_ETH_PRICE_USD}")
-        print(f"  Cache Paths:")
-        print(f"    - Decimals: {self.DECIMALS_CACHE_PATH}")
-        print(f"    - Block→TS: {self.BLOCK_TS_CACHE_PATH}")
+        print(f"\n  🎯 DEMO OPTIMIZATIONS:")
+        print(f"    - Poll interval: {self.WORKER_POLL_SECONDS}s (ultra-fast refresh)")
+        print(f"    - Time window: {self.WINDOW_MINUTES} min (tight, live data)")
+        print(f"    - Preview rows: {self.PREVIEW_ROWS} (rich display)")
+        print(f"    - Block lookback: {self.BLOCK_LOOKBACK} (quick catchup)")
+        print(f"    - Max pages/cycle: {self.MAX_PAGES_PER_CYCLE} (rate-limit safe)")
+        print(f"    - Min swaps alert: {self.MIN_SWAPS_PER_CYCLE}")
+        print(f"    - Stale threshold: {self.STALE_THRESHOLD_SECONDS}s")
+        print(f"    - Emoji markers: {'✅' if self.ENABLE_EMOJI_MARKERS else '❌'}")
+        print(f"    - Spread alerts: {'✅' if self.ENABLE_SPREAD_ALERTS else '❌'}")
+        print(f"\n  📊 STRATEGY:")
+        print(f"    - Window: {self.WINDOW_STRATEGY.upper()}")
+        print(f"    - Early-stop: {self.EARLY_STOP_MODE or self.WINDOW_STRATEGY} (auto)")
+        print(f"    - ETH Price (est): ${self.REFERENCE_ETH_PRICE_USD}")
+        print(f"\n  💾 PATHS:")
+        print(f"    - Decimals cache: {self.DECIMALS_CACHE_PATH}")
+        print(f"    - Block→TS cache: {self.BLOCK_TS_CACHE_PATH}")
         print(f"    - State: {self.LAST_BLOCK_STATE_PATH}")
         print(f"    - Preview: {self.PREVIEW_PATH}")
-        print("=" * 60)
+        print("=" * 70)
     
     @staticmethod
     def _redact_url(url: str) -> str:

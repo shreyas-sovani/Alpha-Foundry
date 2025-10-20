@@ -16,7 +16,10 @@ build/
 
 # Worker output and state
 apps/worker/out/
+apps/worker/apps/worker/out/
 state/
+*.log
+*.pid
 
 # Node.js (future)
 node_modules/

@@ -1,5 +1,5 @@
 {
-  "explorer_base": "",
-  "api_base": "",
-  "chain_id": null
+  "explorer_base": "https://dex-arbitrage-mainnet.cloud.blockscout.com",
+  "api_base": "https://dex-arbitrage-mainnet.cloud.blockscout.com/api/v2",
+  "chain_id": 1
 }

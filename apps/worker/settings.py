@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # Reference price for USD estimates
     REFERENCE_ETH_PRICE_USD: float = 2500.0
     
+    # Rolling Window Configuration - NEW
+    ROLLING_WINDOW_SIZE: int = 1000  # Maximum rows to keep in dexarb_latest.jsonl
+    ROLLING_WINDOW_UNIT: Literal["rows"] = "rows"  # Future: support "hours", "minutes"
+    
     # Pool Activity Validation - NEW
     MIN_SWAPS_PER_CYCLE: int = 1  # Warn if fewer swaps than this
     STALE_THRESHOLD_SECONDS: int = 300  # Alert if no new data in 5 minutes
@@ -116,6 +120,7 @@ class Settings(BaseSettings):
         print(f"    - Max pages/cycle: {self.MAX_PAGES_PER_CYCLE} (rate-limit safe)")
         print(f"    - Min swaps alert: {self.MIN_SWAPS_PER_CYCLE}")
         print(f"    - Stale threshold: {self.STALE_THRESHOLD_SECONDS}s")
+        print(f"    - Rolling window: {self.ROLLING_WINDOW_SIZE} {self.ROLLING_WINDOW_UNIT}")
         print(f"    - Emoji markers: {'✅' if self.ENABLE_EMOJI_MARKERS else '❌'}")
         print(f"    - Spread alerts: {'✅' if self.ENABLE_SPREAD_ALERTS else '❌'}")
         print(f"\n  📊 STRATEGY:")

@@ -457,7 +457,10 @@ def count_jsonl_rows(file_path: Path) -> int:
 
 def rotate_jsonl_if_needed(file_path: Path, max_rows: int) -> bool:
     """
-    Rotate JSONL file if it exceeds max_rows.
+    DEPRECATED: Use apply_rolling_window_pruning() instead for atomic rolling window.
+    
+    Rotate JSONL file if it exceeds max_rows by renaming with timestamp.
+    This creates archive files but doesn't implement a rolling window.
     
     Returns:
         True if rotated, False otherwise
@@ -473,6 +476,124 @@ def rotate_jsonl_if_needed(file_path: Path, max_rows: int) -> bool:
         return True
     
     return False
+
+
+def apply_rolling_window_pruning(
+    file_path: Path,
+    window_size: int,
+    dedupe_tracker: Optional[DedupeTracker] = None
+) -> dict:
+    """
+    Apply rolling window pruning to keep only the latest N rows in JSONL file.
+    
+    This function:
+    1. Reads all rows from the file
+    2. Keeps only the latest window_size rows (sorted by timestamp desc)
+    3. Atomically writes back via temp file + os.replace
+    4. Optionally prunes dedupe tracker to match the window
+    5. Returns stats about the pruning operation
+    
+    Args:
+        file_path: Path to the JSONL file
+        window_size: Maximum number of rows to keep
+        dedupe_tracker: Optional dedupe tracker to prune in sync
+        
+    Returns:
+        Dict with keys: total_before, total_after, rows_dropped, oldest_ts, newest_ts, oldest_block, newest_block
+    """
+    if not file_path.exists():
+        return {
+            "total_before": 0,
+            "total_after": 0,
+            "rows_dropped": 0,
+            "oldest_ts": None,
+            "newest_ts": None,
+            "oldest_block": None,
+            "newest_block": None
+        }
+    
+    # Read all rows
+    rows = []
+    with open(file_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    if USE_ORJSON:
+                        rows.append(orjson.loads(line))
+                    else:
+                        rows.append(json.loads(line))
+                except Exception as e:
+                    logger.warning(f"Skipping malformed JSONL row: {e}")
+    
+    total_before = len(rows)
+    
+    # If within window, no pruning needed
+    if total_before <= window_size:
+        return {
+            "total_before": total_before,
+            "total_after": total_before,
+            "rows_dropped": 0,
+            "oldest_ts": min((r.get("timestamp", 0) for r in rows), default=None) if rows else None,
+            "newest_ts": max((r.get("timestamp", 0) for r in rows), default=None) if rows else None,
+            "oldest_block": min((r.get("block_number", 0) for r in rows), default=None) if rows else None,
+            "newest_block": max((r.get("block_number", 0) for r in rows), default=None) if rows else None
+        }
+    
+    # Sort by timestamp descending (newest first), then by block_number as tiebreaker
+    rows.sort(key=lambda r: (r.get("timestamp", 0), r.get("block_number", 0)), reverse=True)
+    
+    # Keep only the latest window_size rows
+    kept_rows = rows[:window_size]
+    dropped_rows = rows[window_size:]
+    
+    # Extract stats
+    oldest_ts = min((r.get("timestamp", 0) for r in kept_rows), default=None) if kept_rows else None
+    newest_ts = max((r.get("timestamp", 0) for r in kept_rows), default=None) if kept_rows else None
+    oldest_block = min((r.get("block_number", 0) for r in kept_rows), default=None) if kept_rows else None
+    newest_block = max((r.get("block_number", 0) for r in kept_rows), default=None) if kept_rows else None
+    
+    # Atomic write via temp file
+    temp_path = file_path.with_suffix(".jsonl.tmp")
+    try:
+        with open(temp_path, "w") as f:
+            for row in kept_rows:
+                if USE_ORJSON:
+                    f.write(orjson.dumps(row).decode("utf-8") + "\n")
+                else:
+                    f.write(json.dumps(row) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        
+        # Atomic replace
+        temp_path.replace(file_path)
+        logger.info(f"Rolling prune: dropped {len(dropped_rows)} old swaps, latest rows now: {len(kept_rows)}")
+        
+    except Exception as e:
+        logger.error(f"Failed to apply rolling window pruning: {e}")
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+    
+    # Prune dedupe tracker if provided
+    if dedupe_tracker and dropped_rows:
+        # Remove entries for dropped rows
+        dropped_keys = {
+            f"{r.get('tx_hash', '')}:{r.get('log_index', 0)}"
+            for r in dropped_rows
+        }
+        dedupe_tracker.prune(dropped_keys)
+        logger.debug(f"Pruned {len(dropped_keys)} entries from dedupe tracker")
+    
+    return {
+        "total_before": total_before,
+        "total_after": len(kept_rows),
+        "rows_dropped": len(dropped_rows),
+        "oldest_ts": oldest_ts,
+        "newest_ts": newest_ts,
+        "oldest_block": oldest_block,
+        "newest_block": newest_block
+    }
 
 
 def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "1.0") -> None:
@@ -992,11 +1113,19 @@ async def run_cycle(
             os.fsync(f.fileno())
         logger.info(f"✓ Appended {len(rows)} rows to {jsonl_path}")
     
-    # Check if rotation is needed
-    rotated = rotate_jsonl_if_needed(jsonl_path, settings.MAX_ROWS_PER_ROTATION)
+    # Apply rolling window pruning if needed
+    prune_stats = apply_rolling_window_pruning(
+        file_path=jsonl_path,
+        window_size=settings.ROLLING_WINDOW_SIZE,
+        dedupe_tracker=dedupe
+    )
+    
+    # Prune price buffer to match rolling window
+    if prune_stats["oldest_ts"]:
+        price_buffer.prune_by_timestamp(prune_stats["oldest_ts"])
     
     # Update metadata
-    total_rows = count_jsonl_rows(jsonl_path)
+    total_rows = prune_stats["total_after"]
     update_metadata(metadata_path, total_rows, schema_version=settings.SCHEMA_VERSION)
     logger.info(f"✓ Updated metadata: {total_rows} rows")
     
@@ -1074,7 +1203,16 @@ async def run_cycle(
     if stats.get("early_stop_reason"):
         print(f"  Early-stop reason: {stats['early_stop_reason']}")
     print(f"  Dedupe cache size: {len(dedupe.seen)}")
-    print(f"  Rotated: {'Yes' if rotated else 'No'}")
+    
+    # Print rolling window stats
+    if prune_stats["rows_dropped"] > 0:
+        print(f"  Rolling window: dropped {prune_stats['rows_dropped']} old swaps")
+        print(f"    - Window size: {prune_stats['total_after']}/{settings.ROLLING_WINDOW_SIZE} rows")
+        print(f"    - Oldest: block {prune_stats['oldest_block']} (ts {prune_stats['oldest_ts']})")
+        print(f"    - Newest: block {prune_stats['newest_block']} (ts {prune_stats['newest_ts']})")
+    else:
+        print(f"  Rolling window: {prune_stats['total_after']}/{settings.ROLLING_WINDOW_SIZE} rows (no pruning needed)")
+    
     print(f"  New state:")
     print(f"    - last_seen_ts: {new_last_seen_ts}")
     print(f"    - last_seen_block: {new_last_seen_block}")

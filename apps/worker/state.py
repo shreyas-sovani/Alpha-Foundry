@@ -139,6 +139,29 @@ class RollingPriceBuffer:
         
         return latest["price"]
     
+    def prune_by_timestamp(self, cutoff_timestamp: int):
+        """
+        Remove price entries older than cutoff_timestamp.
+        
+        Used during rolling window pruning to keep buffer in sync with JSONL window.
+        
+        Args:
+            cutoff_timestamp: Unix timestamp; entries before this are removed
+        """
+        pruned_count = 0
+        for pool_id, entries in list(self.buffers.items()):
+            before = len(entries)
+            self.buffers[pool_id] = [e for e in entries if e["timestamp"] >= cutoff_timestamp]
+            after = len(self.buffers[pool_id])
+            pruned_count += (before - after)
+            
+            # Remove empty pools
+            if not self.buffers[pool_id]:
+                del self.buffers[pool_id]
+        
+        if pruned_count > 0:
+            logger.debug(f"Pruned {pruned_count} price entries older than ts={cutoff_timestamp}")
+    
     def save(self, path: str):
         """Persist rolling buffers to disk."""
         write_state(path, {"buffers": self.buffers})
@@ -177,6 +200,21 @@ class DedupeTracker:
             for k in to_remove:
                 self.seen.discard(k)
             logger.debug(f"Pruned dedupe tracker: {len(to_remove)} items removed")
+    
+    def prune(self, keys_to_remove: Set[str]):
+        """
+        Remove specific keys from dedupe tracker.
+        
+        Used during rolling window pruning to free memory for dropped swaps.
+        
+        Args:
+            keys_to_remove: Set of "tx_hash:log_index" keys to remove
+        """
+        before_count = len(self.seen)
+        self.seen -= keys_to_remove
+        removed_count = before_count - len(self.seen)
+        if removed_count > 0:
+            logger.debug(f"Pruned {removed_count} keys from dedupe tracker")
     
     def save(self, path: str):
         """Persist dedupe tracker to disk."""

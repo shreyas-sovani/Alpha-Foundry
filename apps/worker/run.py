@@ -13,8 +13,9 @@ try:
     import orjson
     USE_ORJSON = True
 except ImportError:
-    import json
     USE_ORJSON = False
+
+import json  # Always import json as fallback
 
 from dotenv import load_dotenv
 

@@ -6,6 +6,7 @@ nixPkgs = ["python312", "nodejs"]
 
 [phases.install]
 cmds = [
+  "pip install -r requirements.txt",
   "npm install -g @lighthouse-web3/sdk",
   "lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || true"
 ]

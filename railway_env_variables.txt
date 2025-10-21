@@ -1,4 +1,4 @@
-BLOCKSCOUT_MCP_BASE=https://dex-arbitrage-mainnet.cloud.blockscout.com/api/v2
+BLOCKSCOUT_MCP_BASE=https://eth.blockscout.com/api/v2
 AUTOSCOUT_BASE=https://dex-arbitrage-mainnet.cloud.blockscout.com
 CHAIN_ID=1
 NETWORK_LABEL=Ethereum Mainnet

@@ -1,0 +1,283 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║         🚂 RAILWAY DEPLOYMENT CHECKLIST - FOLLOW THIS EXACTLY 🚀            ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+BEFORE YOU START:
+  [ ] You have a GitHub account
+  [ ] You have access to your .env file
+  [ ] Your worker runs successfully locally (optional but recommended)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 1: VERIFY YOUR PROJECT IS READY (30 seconds)
+
+  Run this command:
+  
+  bash scripts/railway_preflight.sh
+  
+  ✅ All checks should pass. If not, fix issues before continuing.
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 2: PUSH TO GITHUB (2 minutes)
+
+  [ ] Option A - If you HAVE a GitHub repo already:
+      
+      git push
+      
+  [ ] Option B - If you NEED to create a new GitHub repo:
+      
+      1. Open: https://github.com/new
+      2. Repository name: dex-arbitrage-worker
+      3. Description: DEX arbitrage data worker with live Uniswap monitoring
+      4. Public or Private: YOUR CHOICE (both work)
+      5. DO NOT check "Initialize this repository with:"
+      6. Click: "Create repository"
+      7. Run these commands (replace YOUR_USERNAME):
+      
+         git remote add origin https://github.com/YOUR_USERNAME/dex-arbitrage-worker.git
+         git branch -M main
+         git push -u origin main
+      
+  ✅ Verify: Go to your GitHub repo - you should see all files!
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 3: CREATE RAILWAY ACCOUNT (1 minute)
+
+  [ ] Open: https://railway.app
+  [ ] Click: "Start a New Project" or "Login"
+  [ ] Click: "Login with GitHub"
+  [ ] Click: "Authorize railway-app"
+  [ ] Complete profile if first time
+  
+  ✅ You should see the Railway dashboard
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 4: CREATE RAILWAY PROJECT (1 minute)
+
+  [ ] Click: "+ New Project"
+  [ ] Click: "Deploy from GitHub repo"
+  [ ] If first time: Click "Configure GitHub App" → "All repositories" → Install
+  [ ] Find and click your repo: "dex-arbitrage-worker"
+  [ ] Railway starts building (may show errors - that's OK!)
+  
+  ✅ You should see a project with one service
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 5: SET ENVIRONMENT VARIABLES (2 minutes) ⚠️ CRITICAL STEP!
+
+  [ ] Click on your service (the box with your repo name)
+  [ ] Click the "Variables" tab at the top
+  [ ] Click "RAW Editor" button (top right)
+  [ ] Copy ALL content from your .env file
+  [ ] Paste into the Raw Editor
+  [ ] Click "Update Variables" (bottom right)
+  [ ] Railway automatically redeploys
+  
+  ✅ You should see variables listed (values hidden for security)
+
+  REQUIRED VARIABLES (verify these are set):
+    • BLOCKSCOUT_MCP_BASE
+    • CHAIN_ID
+    • DEX_POOL_A
+    • DEX_POOL_B
+    • WORKER_HTTP_HOST=0.0.0.0
+    • WORKER_HTTP_PORT=8787
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 6: GENERATE PUBLIC URL (1 minute)
+
+  [ ] Click the "Settings" tab
+  [ ] Scroll down to "Networking" section
+  [ ] Click "Generate Domain"
+  [ ] Railway creates a URL like: your-service-production-abc123.up.railway.app
+  [ ] COPY THIS URL - you'll need it!
+  
+  ✅ Write your URL here: _________________________________________
+
+  Optional but recommended:
+  [ ] At top of Settings, click service name and rename to "dex-worker"
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 7: MONITOR DEPLOYMENT (2 minutes)
+
+  [ ] Click the "Deployments" tab
+  [ ] Click the latest deployment (top one)
+  [ ] Watch the build logs - you should see:
+      
+      ✓ Installing Python 3.10...
+      ✓ Installing dependencies from apps/worker/requirements.txt...
+      ✓ Build completed
+      ✓ Starting service...
+      
+  [ ] Wait for success messages in the logs:
+      
+      ✓ HTTP server started on http://0.0.0.0:8787
+      🚀 DEX ARBITRAGE WORKER v1.1 - HACKATHON OPTIMIZED
+      ✓ MCP client created
+      
+  [ ] Deployment status changes to: "Active" 🟢
+  
+  ✅ Service is now running!
+  
+  ⚠️ If you see errors:
+      - Check the "Troubleshooting" section in RAILWAY_COMPLETE_GUIDE.md
+      - Verify all environment variables are set
+      - Check Railway logs for specific error messages
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 8: TEST YOUR ENDPOINTS (2 minutes)
+
+  Replace YOUR-URL with your Railway URL in these commands:
+  
+  [ ] Test health endpoint:
+      
+      curl https://YOUR-URL.up.railway.app/health
+      
+      Expected: {"status":"ok"}
+      
+  [ ] Test preview endpoint (may take 30-60 seconds for first data):
+      
+      curl https://YOUR-URL.up.railway.app/preview | head -30
+      
+      Expected: JSON with "header", "preview_rows", "total_rows"
+      
+  [ ] Test metadata endpoint:
+      
+      curl https://YOUR-URL.up.railway.app/metadata
+      
+      Expected: {"schema_version":"1.1","rows":...,"last_updated":...}
+      
+  [ ] Test in browser (optional):
+      Open: https://YOUR-URL.up.railway.app/health
+      Open: https://YOUR-URL.up.railway.app/preview
+      Open: https://YOUR-URL.up.railway.app/metadata
+      
+  ✅ All endpoints responding correctly!
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 9: VERIFY DATA IS FLOWING (1 minute)
+
+  [ ] In Railway, go to "Logs" tab
+  [ ] Look for these messages every 15-30 seconds:
+      
+      🔄 CYCLE SUMMARY - HACKATHON DEMO OPTIMIZED
+      Logs fetched: XX across X pages
+      Produced rows: X
+      Rows: XX -> XX (delta: +X)
+      ✅ VALIDATION: PASS - Dynamic and Useful Data
+      
+  [ ] Check preview endpoint shows increasing row counts:
+      
+      curl -s https://YOUR-URL.up.railway.app/metadata | grep '"rows"'
+      
+      Wait 30 seconds, run again - number should increase
+      
+  ✅ Data is flowing and updating!
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 STEP 10: CONFIGURE MONITORING (OPTIONAL - 2 minutes)
+
+  [ ] In Railway, click service → "Settings"
+  [ ] Scroll to "Observability"
+  [ ] Configure health check:
+      Path: /health
+      Timeout: 60 seconds
+      Interval: 30 seconds
+  [ ] Scroll to "Notifications"
+  [ ] Enable: "Deployment failed"
+  [ ] Enable: "Deployment succeeded"
+  [ ] Enable: "Service crashed"
+  
+  ✅ Alerts configured
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🎉 SUCCESS CHECKLIST - VERIFY ALL BEFORE SHARING
+
+  [ ] Railway deployment status is "Active" 🟢
+  [ ] /health returns {"status":"ok"}
+  [ ] /preview returns swap data with "preview_rows"
+  [ ] /metadata shows increasing "rows" count
+  [ ] Logs show "CYCLE SUMMARY" every 15-30 seconds
+  [ ] No error messages in logs for 5+ minutes
+  [ ] All 3 endpoints accessible from your browser
+  [ ] Data freshness (updated_ago_seconds) stays < 60
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📝 DOCUMENT YOUR DEPLOYMENT
+
+  Write down these details:
+  
+  Railway URL: _____________________________________________________
+  
+  Endpoints:
+    Health:   https://_______________.up.railway.app/health
+    Preview:  https://_______________.up.railway.app/preview
+    Metadata: https://_______________.up.railway.app/metadata
+  
+  Deployed: ________________ (date)
+  Plan: [ ] Trial  [ ] Starter ($5/mo)  [ ] Pro ($20/mo)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🔄 NEXT: INTEGRATE WITH YOUR PROJECT
+
+  [ ] Update Hosted Agent configuration with Railway URL
+  [ ] Update dApp UI to fetch from Railway endpoints
+  [ ] Add Railway URL to project README
+  [ ] Test end-to-end: Agent → Railway → Blockscout
+  [ ] Share endpoints with team/judges
+
+═══════════════════════════════════════════════════════════════════════════════
+
+💡 DAILY MONITORING CHECKLIST
+
+  [ ] Check Railway dashboard - service is Active 🟢
+  [ ] Check logs - no errors in last hour
+  [ ] Test /health endpoint - responds quickly
+  [ ] Check /metadata - data is fresh (< 5 min old)
+  [ ] Monitor usage - not exceeding free tier limits
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🆘 IF SOMETHING GOES WRONG
+
+  1. Check Railway logs first (Logs tab)
+  2. Look for specific error messages
+  3. Verify all environment variables are set correctly
+  4. Try redeploying: Settings → Redeploy
+  5. Check RAILWAY_COMPLETE_GUIDE.md → Troubleshooting section
+  6. Ask in Railway Discord: https://discord.gg/railway
+
+  Common fixes:
+    • Build fails → Check requirements.txt
+    • Port error → Verify WORKER_HTTP_HOST=0.0.0.0
+    • No data → Wait 2-3 minutes or check pool activity on Etherscan
+    • Crashes → Check logs, verify all env vars set
+
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ CONGRATULATIONS! YOUR WORKER IS LIVE ON RAILWAY! 🎉
+
+You now have:
+  ✓ 24/7 globally accessible endpoints
+  ✓ Live Ethereum mainnet swap data
+  ✓ Auto-deployment from GitHub
+  ✓ Monitoring and logging
+  ✓ Production-ready infrastructure
+
+Share your endpoints with confidence! 🚀
+
+═══════════════════════════════════════════════════════════════════════════════

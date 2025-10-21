@@ -13,5 +13,8 @@ cmds = [
   "PATH=\"/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH\" lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || true"
 ]
 
+[variables]
+PATH = "/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH"
+
 [start]
 cmd = "export PATH=\"/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH\" && cd apps/worker && python run.py"

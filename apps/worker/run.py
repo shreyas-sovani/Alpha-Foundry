@@ -790,16 +790,31 @@ async def upload_to_lighthouse_and_cleanup(
                 except Exception as e:
                     logger.error(f"Failed to update metadata with CID: {e}")
             
-            # Delete old file from Lighthouse if exists
-            if old_cid and old_cid != new_cid:
-                try:
-                    logger.info(f"🗑️  Deleting old file from Lighthouse: {old_cid}")
-                    # Note: Lighthouse SDK doesn't have direct delete method yet
-                    # This would require calling the REST API directly
-                    # For now, just log it - old files will remain but user can manually delete
-                    logger.warning(f"Old CID cleanup not yet implemented: {old_cid}")
-                except Exception as e:
-                    logger.error(f"Failed to delete old CID {old_cid}: {e}")
+            # Auto-cleanup: Delete old files, keep only latest
+            try:
+                from lighthouse_cleanup import cleanup_lighthouse_storage
+                
+                logger.info("🧹 Running automatic cleanup...")
+                cleanup_result = cleanup_lighthouse_storage(
+                    api_key=settings.LIGHTHOUSE_API_KEY,
+                    protected_cid=new_cid,
+                    dry_run=False
+                )
+                
+                if cleanup_result["success"]:
+                    if cleanup_result["files_deleted"] > 0:
+                        logger.info(
+                            f"✅ Cleanup: Deleted {cleanup_result['files_deleted']} old files "
+                            f"({cleanup_result['space_saved_mb']:.2f} MB saved)"
+                        )
+                    else:
+                        logger.debug("✅ Cleanup: No old files to delete")
+                else:
+                    logger.warning(f"⚠️  Cleanup failed: {cleanup_result.get('error', 'Unknown')}")
+            except ImportError:
+                logger.warning("⚠️  Cleanup module not available - old files not deleted")
+            except Exception as e:
+                logger.error(f"❌ Cleanup error: {e}")
             
             return new_cid, current_time
         else:

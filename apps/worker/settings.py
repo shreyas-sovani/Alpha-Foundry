@@ -65,9 +65,9 @@ class Settings(BaseSettings):
     ENABLE_SPREAD_ALERTS: bool = True  # Highlight arbitrage opportunities
     
     # Lighthouse Integration - NEW
-    LIGHTHOUSE_API_KEY: Optional[str] = ""  # API key for Lighthouse Storage
-    LIGHTHOUSE_ENABLE_UPLOAD: bool = True  # Enable automatic upload (Railway will have this set)
-    LIGHTHOUSE_UPLOAD_TIMEOUT: int = 60  # Upload timeout in seconds
+    LIGHTHOUSE_API_KEY: Optional[str] = ""
+    LIGHTHOUSE_ENABLE_UPLOAD: bool = True
+    LIGHTHOUSE_UPLOAD_TIMEOUT: int = 180  # Increased to 3 minutes for large files
     
     class Config:
         env_file = ".env"

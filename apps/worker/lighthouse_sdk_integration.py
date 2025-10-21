@@ -46,19 +46,41 @@ class LighthouseSDK:
     - Metadata management
     """
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, upload_timeout: int = 180):
         """
         Initialize Lighthouse SDK client.
         
         Args:
             api_key: Lighthouse API key from https://files.lighthouse.storage/
+            upload_timeout: Upload timeout in seconds (default: 180)
         """
         if not api_key:
             raise ValueError("LIGHTHOUSE_API_KEY is required")
         
         self.api_key = api_key
+        self.upload_timeout = upload_timeout
+        
+        # Monkey-patch requests to add timeouts (SDK doesn't expose this)
+        import requests as req_lib
+        original_post = req_lib.post
+        original_get = req_lib.get
+        
+        def post_with_timeout(*args, **kwargs):
+            if 'timeout' not in kwargs:
+                # (connect_timeout, read_timeout)
+                kwargs['timeout'] = (15, self.upload_timeout)
+            return original_post(*args, **kwargs)
+        
+        def get_with_timeout(*args, **kwargs):
+            if 'timeout' not in kwargs:
+                kwargs['timeout'] = (15, 30)
+            return original_get(*args, **kwargs)
+        
+        req_lib.post = post_with_timeout
+        req_lib.get = get_with_timeout
+        
         self.client = Lighthouse(token=api_key)
-        logger.info("Lighthouse SDK client initialized")
+        logger.info(f"Lighthouse SDK client initialized (upload timeout: {self.upload_timeout}s)")
     
     def encrypt_file(
         self,

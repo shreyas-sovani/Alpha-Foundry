@@ -697,8 +697,11 @@ async def upload_to_lighthouse_and_cleanup(
         return None
     
     try:
-        # Initialize Lighthouse SDK
-        lighthouse = LighthouseSDK(api_key=settings.LIGHTHOUSE_API_KEY)
+        # Initialize Lighthouse SDK with timeout
+        lighthouse = LighthouseSDK(
+            api_key=settings.LIGHTHOUSE_API_KEY,
+            upload_timeout=settings.LIGHTHOUSE_UPLOAD_TIMEOUT
+        )
         
         # Get old CID from metadata to delete later
         old_cid = None

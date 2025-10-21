@@ -8,9 +8,9 @@ nixPkgs = ["...", "nodejs"]
 cmds = [
   "...",
   "npm install -g @lighthouse-web3/sdk",
-  "lighthouse-web3 --version",
-  "lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || true"
+  "export PATH=\"/root/.nix-profile/bin:$PATH\" && lighthouse-web3 --version",
+  "export PATH=\"/root/.nix-profile/bin:$PATH\" && lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || true"
 ]
 
 [start]
-cmd = "export PATH=\"$(npm root -g)/../../bin:$PATH\" && cd apps/worker && python run.py"
+cmd = "export PATH=\"/root/.nix-profile/bin:$PATH\" && cd apps/worker && python run.py"

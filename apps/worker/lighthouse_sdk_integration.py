@@ -79,6 +79,11 @@ class LighthouseSDK:
         req_lib.post = post_with_timeout
         req_lib.get = get_with_timeout
         
+        # Monkey-patch SDK to use new upload endpoint (upgrade from node.lighthouse.storage)
+        from lighthouseweb3.functions import config
+        config.Config.lighthouse_node = "https://upload.lighthouse.storage"
+        logger.info("✓ Patched SDK to use upload.lighthouse.storage endpoint")
+        
         self.client = Lighthouse(token=api_key)
         logger.info(f"Lighthouse SDK client initialized (upload timeout: {self.upload_timeout}s)")
     
@@ -155,7 +160,7 @@ class LighthouseSDK:
     
     def upload_file(self, file_path: Path, tag: str = "") -> Dict[str, Any]:
         """
-        Upload file to Lighthouse using official SDK.
+        Upload file to Lighthouse using official SDK (with fallback to direct API).
         
         Args:
             file_path: Path to file to upload
@@ -177,17 +182,32 @@ class LighthouseSDK:
         
         start_time = time.time()
         
-        # Upload using official SDK
-        result = self.client.upload(source=str(file_path), tag=tag)
+        # Try SDK first, fallback to direct API if node is down
+        try:
+            # Upload using official SDK
+            result = self.client.upload(source=str(file_path), tag=tag)
+            
+            # Extract CID from response
+            if isinstance(result, dict):
+                data = result.get('data', result)
+                cid = data.get('Hash') or data.get('cid')
+            else:
+                raise ValueError(f"Unexpected response format: {result}")
+            
+        except Exception as sdk_error:
+            # SDK failed (likely node.lighthouse.storage is down)
+            logger.warning(f"SDK upload failed: {sdk_error}")
+            logger.info(f"Trying direct API upload to api.lighthouse.storage...")
+            
+            # Import and use direct upload
+            from lighthouse_direct_upload import upload_file_direct
+            direct_result = upload_file_direct(file_path, self.api_key, self.upload_timeout)
+            
+            upload_time = time.time() - start_time
+            direct_result["upload_time"] = upload_time
+            return direct_result
         
         upload_time = time.time() - start_time
-        
-        # Extract CID from response
-        if isinstance(result, dict):
-            data = result.get('data', result)
-            cid = data.get('Hash') or data.get('cid')
-        else:
-            raise ValueError(f"Unexpected response format: {result}")
         
         if not cid:
             raise ValueError(f"No CID in response: {result}")

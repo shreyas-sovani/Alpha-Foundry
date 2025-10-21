@@ -711,19 +711,32 @@ async def upload_to_lighthouse_and_cleanup(
                 logger.debug(f"Could not read old CID from metadata: {e}")
         
         # Upload new file (encrypted) - run in executor since it's blocking
-        logger.info(f"📤 Uploading {jsonl_path.name} to Lighthouse...")
+        logger.info(f"📤 Uploading {jsonl_path.name} to Lighthouse (timeout: {settings.LIGHTHOUSE_UPLOAD_TIMEOUT}s)...")
         upload_start = time.time()
         
-        # Run blocking upload in thread pool executor
+        # Run blocking upload in thread pool executor with timeout
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: lighthouse.encrypt_and_upload(
-                input_path=jsonl_path,
-                tag=f"dexarb_{settings.NETWORK_LABEL}",
-                keep_encrypted=False  # Don't keep .enc file
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: lighthouse.encrypt_and_upload(
+                        input_path=jsonl_path,
+                        tag=f"dexarb_{settings.NETWORK_LABEL}",
+                        keep_encrypted=False  # Don't keep .enc file
+                    )
+                ),
+                timeout=settings.LIGHTHOUSE_UPLOAD_TIMEOUT
             )
-        )
+        except asyncio.TimeoutError:
+            upload_duration = time.time() - upload_start
+            logger.error(f"❌ Lighthouse upload timed out after {upload_duration:.1f}s")
+            logger.error(f"   Tip: Increase LIGHTHOUSE_UPLOAD_TIMEOUT or disable with LIGHTHOUSE_ENABLE_UPLOAD=false")
+            return None
+        except Exception as e:
+            upload_duration = time.time() - upload_start
+            logger.error(f"❌ Lighthouse upload failed after {upload_duration:.1f}s: {e}")
+            return None
         
         upload_duration = time.time() - upload_start
         

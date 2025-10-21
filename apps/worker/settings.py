@@ -66,7 +66,8 @@ class Settings(BaseSettings):
     
     # Lighthouse Integration - NEW
     LIGHTHOUSE_API_KEY: Optional[str] = ""  # API key for Lighthouse Storage
-    LIGHTHOUSE_ENABLE_UPLOAD: bool = True  # Enable automatic upload to Lighthouse
+    LIGHTHOUSE_ENABLE_UPLOAD: bool = False  # Enable automatic upload (default: False to avoid blocking)
+    LIGHTHOUSE_UPLOAD_TIMEOUT: int = 60  # Upload timeout in seconds
     
     class Config:
         env_file = ".env"
@@ -127,10 +128,11 @@ class Settings(BaseSettings):
         print(f"    - Rolling window: {self.ROLLING_WINDOW_SIZE} {self.ROLLING_WINDOW_UNIT}")
         print(f"    - Emoji markers: {'✅' if self.ENABLE_EMOJI_MARKERS else '❌'}")
         print(f"    - Spread alerts: {'✅' if self.ENABLE_SPREAD_ALERTS else '❌'}")
-        print(f"\n  � LIGHTHOUSE STORAGE:")
+        print(f"\n  🔐 LIGHTHOUSE STORAGE:")
         print(f"    - Upload enabled: {'✅' if self.LIGHTHOUSE_ENABLE_UPLOAD else '❌'}")
         print(f"    - API key: {'✅ SET' if self.LIGHTHOUSE_API_KEY else '❌ NOT SET'}")
-        print(f"\n  �📊 STRATEGY:")
+        print(f"    - Upload timeout: {self.LIGHTHOUSE_UPLOAD_TIMEOUT}s")
+        print(f"\n  📊 STRATEGY:")
         print(f"    - Window: {self.WINDOW_STRATEGY.upper()}")
         print(f"    - Early-stop: {self.EARLY_STOP_MODE or self.WINDOW_STRATEGY} (auto)")
         print(f"    - ETH Price (est): ${self.REFERENCE_ETH_PRICE_USD}")

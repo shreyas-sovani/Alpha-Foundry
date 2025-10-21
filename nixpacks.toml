@@ -8,12 +8,10 @@ nixPkgs = ["...", "nodejs"]
 cmds = [
   "...",
   "npm install -g @lighthouse-web3/sdk",
-  "npm root -g",
-  "npm bin -g",
-  "which node",
-  "find /root -name lighthouse-web3 2>/dev/null || true",
-  "ls -la $(npm bin -g) || true"
+  "ls -la /nix/store/*/bin/lighthouse-web3 || true",
+  "PATH=\"/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH\" lighthouse-web3 --version || true",
+  "PATH=\"/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH\" lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || true"
 ]
 
 [start]
-cmd = "export PATH=\"$(npm bin -g):$PATH\" && cd apps/worker && python run.py"
+cmd = "export PATH=\"/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH\" && cd apps/worker && python run.py"

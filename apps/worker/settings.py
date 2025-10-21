@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     ENABLE_EMOJI_MARKERS: bool = True  # Add visual markers to new swaps
     ENABLE_SPREAD_ALERTS: bool = True  # Highlight arbitrage opportunities
     
+    # Lighthouse Integration - NEW
+    LIGHTHOUSE_API_KEY: Optional[str] = ""  # API key for Lighthouse Storage
+    LIGHTHOUSE_ENABLE_UPLOAD: bool = True  # Enable automatic upload to Lighthouse
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
@@ -123,7 +127,10 @@ class Settings(BaseSettings):
         print(f"    - Rolling window: {self.ROLLING_WINDOW_SIZE} {self.ROLLING_WINDOW_UNIT}")
         print(f"    - Emoji markers: {'✅' if self.ENABLE_EMOJI_MARKERS else '❌'}")
         print(f"    - Spread alerts: {'✅' if self.ENABLE_SPREAD_ALERTS else '❌'}")
-        print(f"\n  📊 STRATEGY:")
+        print(f"\n  � LIGHTHOUSE STORAGE:")
+        print(f"    - Upload enabled: {'✅' if self.LIGHTHOUSE_ENABLE_UPLOAD else '❌'}")
+        print(f"    - API key: {'✅ SET' if self.LIGHTHOUSE_API_KEY else '❌ NOT SET'}")
+        print(f"\n  �📊 STRATEGY:")
         print(f"    - Window: {self.WINDOW_STRATEGY.upper()}")
         print(f"    - Early-stop: {self.EARLY_STOP_MODE or self.WINDOW_STRATEGY} (auto)")
         print(f"    - ETH Price (est): ${self.REFERENCE_ETH_PRICE_USD}")

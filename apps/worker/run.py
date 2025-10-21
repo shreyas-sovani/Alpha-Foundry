@@ -39,6 +39,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Lighthouse Storage integration
+try:
+    from lighthouse_sdk_integration import LighthouseSDK
+    LIGHTHOUSE_AVAILABLE = True
+except ImportError:
+    LIGHTHOUSE_AVAILABLE = False
+    logger.warning("Lighthouse SDK not available - file upload disabled")
+
 # Global HTTP server instance for cleanup
 http_server: Optional[ReadOnlyHTTPServer] = None
 
@@ -665,6 +673,113 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
         raise
 
 
+async def upload_to_lighthouse_and_cleanup(
+    jsonl_path: Path,
+    metadata_path: Path,
+    settings: Settings
+) -> Optional[str]:
+    """
+    Upload the latest JSONL file to Lighthouse and delete old uploads.
+    
+    Returns the new CID if successful, None if upload disabled or failed.
+    """
+    # Skip if upload disabled or API key not set
+    if not settings.LIGHTHOUSE_ENABLE_UPLOAD:
+        logger.debug("Lighthouse upload disabled (LIGHTHOUSE_ENABLE_UPLOAD=False)")
+        return None
+    
+    if not settings.LIGHTHOUSE_API_KEY:
+        logger.warning("Lighthouse upload enabled but LIGHTHOUSE_API_KEY not set")
+        return None
+    
+    if not LIGHTHOUSE_AVAILABLE:
+        logger.warning("Lighthouse SDK not available - cannot upload")
+        return None
+    
+    try:
+        # Initialize Lighthouse SDK
+        lighthouse = LighthouseSDK(api_key=settings.LIGHTHOUSE_API_KEY)
+        
+        # Get old CID from metadata to delete later
+        old_cid = None
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+                    old_cid = metadata.get("latest_cid")
+            except Exception as e:
+                logger.debug(f"Could not read old CID from metadata: {e}")
+        
+        # Upload new file (encrypted) - run in executor since it's blocking
+        logger.info(f"📤 Uploading {jsonl_path.name} to Lighthouse...")
+        upload_start = time.time()
+        
+        # Run blocking upload in thread pool executor
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: lighthouse.encrypt_and_upload(
+                input_path=jsonl_path,
+                tag=f"dexarb_{settings.NETWORK_LABEL}",
+                keep_encrypted=False  # Don't keep .enc file
+            )
+        )
+        
+        upload_duration = time.time() - upload_start
+        
+        # Extract CID from nested result
+        upload_data = result.get("upload", {})
+        new_cid = upload_data.get("cid")
+        
+        if new_cid:
+            logger.info(f"✅ Lighthouse upload successful in {upload_duration:.2f}s")
+            logger.info(f"   CID: {new_cid}")
+            logger.info(f"   View: https://files.lighthouse.storage/viewFile/{new_cid}")
+            
+            # Update metadata with new CID
+            if metadata_path.exists():
+                try:
+                    with open(metadata_path, "r") as f:
+                        metadata = json.load(f)
+                    
+                    metadata["latest_cid"] = new_cid
+                    metadata["lighthouse_updated"] = datetime.utcnow().isoformat() + "Z"
+                    
+                    # Atomic write
+                    temp_path = metadata_path.with_suffix(".json.tmp")
+                    with open(temp_path, "w") as f:
+                        if USE_ORJSON:
+                            f.write(orjson.dumps(metadata, option=orjson.OPT_INDENT_2).decode("utf-8"))
+                        else:
+                            json.dump(metadata, f, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    temp_path.replace(metadata_path)
+                    logger.debug(f"Metadata updated with CID: {new_cid}")
+                except Exception as e:
+                    logger.error(f"Failed to update metadata with CID: {e}")
+            
+            # Delete old file from Lighthouse if exists
+            if old_cid and old_cid != new_cid:
+                try:
+                    logger.info(f"🗑️  Deleting old file from Lighthouse: {old_cid}")
+                    # Note: Lighthouse SDK doesn't have direct delete method yet
+                    # This would require calling the REST API directly
+                    # For now, just log it - old files will remain but user can manually delete
+                    logger.warning(f"Old CID cleanup not yet implemented: {old_cid}")
+                except Exception as e:
+                    logger.error(f"Failed to delete old CID {old_cid}: {e}")
+            
+            return new_cid
+        else:
+            logger.error("Lighthouse upload failed - no CID returned")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Lighthouse upload error: {e}", exc_info=True)
+        return None
+
+
 def update_preview_with_analytics(
     preview_path: Path,
     jsonl_path: Path,
@@ -1128,6 +1243,15 @@ async def run_cycle(
     total_rows = prune_stats["total_after"]
     update_metadata(metadata_path, total_rows, schema_version=settings.SCHEMA_VERSION)
     logger.info(f"✓ Updated metadata: {total_rows} rows")
+    
+    # Upload to Lighthouse (if enabled)
+    lighthouse_cid = await upload_to_lighthouse_and_cleanup(
+        jsonl_path=jsonl_path,
+        metadata_path=metadata_path,
+        settings=settings
+    )
+    if lighthouse_cid:
+        logger.info(f"✓ Lighthouse CID: {lighthouse_cid}")
     
     # Update preview with analytics
     rows_after, preview_latest_ts = update_preview_with_analytics(

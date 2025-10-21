@@ -1,12 +1,12 @@
-# Let Nixpacks auto-detect Python from requirements.txt
-# It will automatically create venv and install dependencies
+# Extend Nixpacks auto-detection with Node.js for Lighthouse CLI
+# The "..." syntax extends the default provider behavior
 
 [phases.setup]
-nixPkgs = ["python312", "nodejs"]
+nixPkgs = ["...", "nodejs"]
 
 [phases.install]
 cmds = [
-  "pip install -r requirements.txt",
+  "...",
   "npm install -g @lighthouse-web3/sdk",
   "lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || true"
 ]

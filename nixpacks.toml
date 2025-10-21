@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["python310", "pip"]
+
+[phases.install]
+cmds = ["pip install -r apps/worker/requirements.txt"]
+
+[start]
+cmd = "cd apps/worker && python run.py"

@@ -5,5 +5,6 @@ tenacity>=8
 orjson>=3
 eth-abi>=5
 pydantic-settings>=2
+aiohttp>=3.9
 # uvloop: platform-specific; install manually on Linux/macOS for better async performance
 uvloop

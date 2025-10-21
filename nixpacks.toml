@@ -1,5 +1,14 @@
 # Let Nixpacks auto-detect Python from requirements.txt
 # It will automatically create venv and install dependencies
 
+[phases.setup]
+nixPkgs = ["nodejs", "npm"]
+
+[phases.install]
+cmds = [
+  "npm install -g @lighthouse-web3/sdk",
+  "lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || true"
+]
+
 [start]
 cmd = "cd apps/worker && python run.py"

@@ -230,6 +230,21 @@ class LighthouseCleanup:
             True if successful, False otherwise
         """
         try:
+            # Check if CLI is available
+            try:
+                subprocess.run(
+                    ["lighthouse-web3", "--version"],
+                    capture_output=True,
+                    timeout=2,
+                    check=True
+                )
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                logger.error(
+                    "❌ Lighthouse CLI not installed. "
+                    "Install: npm install -g @lighthouse-web3/sdk"
+                )
+                return False
+            
             result = subprocess.run(
                 [*self.DELETE_COMMAND, file.file_id],
                 capture_output=True,
@@ -411,12 +426,23 @@ def setup_cli_if_needed(api_key: str) -> bool:
     """
     try:
         # Check if CLI is installed
-        subprocess.run(
-            ["lighthouse-web3", "--version"],
-            capture_output=True,
-            timeout=5,
-            check=True
-        )
+        try:
+            subprocess.run(
+                ["lighthouse-web3", "--version"],
+                capture_output=True,
+                timeout=5,
+                check=True
+            )
+        except FileNotFoundError:
+            logger.error(
+                "❌ Lighthouse CLI not installed. "
+                "Install with: npm install -g @lighthouse-web3/sdk"
+            )
+            logger.error(
+                "💡 Cleanup disabled until CLI is available. "
+                "Files will accumulate on Lighthouse."
+            )
+            return False
         
         # Try to import API key (safe to re-run)
         result = subprocess.run(
@@ -431,13 +457,11 @@ def setup_cli_if_needed(api_key: str) -> bool:
             return True
         else:
             logger.warning(f"⚠️  CLI config warning: {result.stderr}")
-            return False
+            # Still return True - might already be configured
+            return True
             
-    except FileNotFoundError:
-        logger.error(
-            "❌ Lighthouse CLI not installed. "
-            "Install with: npm install -g @lighthouse-web3/sdk"
-        )
+    except subprocess.TimeoutExpired:
+        logger.error("⏱️  CLI setup timeout")
         return False
     except Exception as e:
         logger.error(f"❌ CLI setup failed: {e}")

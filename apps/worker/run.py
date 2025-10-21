@@ -677,25 +677,39 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
 async def upload_to_lighthouse_and_cleanup(
     jsonl_path: Path,
     metadata_path: Path,
-    settings: Settings
-) -> Optional[str]:
+    settings: Settings,
+    last_upload_time: Optional[float] = None
+) -> tuple[Optional[str], float]:
     """
-    Upload the latest JSONL file to Lighthouse and delete old uploads.
+    Upload the latest JSONL file to Lighthouse periodically (not every cycle).
     
-    Returns the new CID if successful, None if upload disabled or failed.
+    Args:
+        last_upload_time: Unix timestamp of last upload (None = force upload)
+    
+    Returns:
+        Tuple of (new_cid, current_time) - CID is None if skipped/failed
     """
+    current_time = time.time()
+    
     # Skip if upload disabled or API key not set
     if not settings.LIGHTHOUSE_ENABLE_UPLOAD:
         logger.debug("Lighthouse upload disabled (LIGHTHOUSE_ENABLE_UPLOAD=False)")
-        return None
+        return None, current_time
     
     if not settings.LIGHTHOUSE_API_KEY:
         logger.warning("Lighthouse upload enabled but LIGHTHOUSE_API_KEY not set")
-        return None
+        return None, current_time
     
     if not LIGHTHOUSE_AVAILABLE:
         logger.warning("Lighthouse SDK not available - cannot upload")
-        return None
+        return None, current_time
+    
+    # Check if enough time has passed since last upload
+    if last_upload_time is not None:
+        time_since_last = current_time - last_upload_time
+        if time_since_last < settings.LIGHTHOUSE_UPLOAD_INTERVAL:
+            logger.debug(f"Skipping upload - {time_since_last:.0f}s since last upload (interval: {settings.LIGHTHOUSE_UPLOAD_INTERVAL}s)")
+            return None, last_upload_time  # Return old time since we didn't upload
     
     try:
         # Initialize Lighthouse SDK with timeout
@@ -736,11 +750,11 @@ async def upload_to_lighthouse_and_cleanup(
             upload_duration = time.time() - upload_start
             logger.error(f"❌ Lighthouse upload timed out after {upload_duration:.1f}s")
             logger.error(f"   Tip: Increase LIGHTHOUSE_UPLOAD_TIMEOUT or disable with LIGHTHOUSE_ENABLE_UPLOAD=false")
-            return None
+            return None, current_time
         except Exception as e:
             upload_duration = time.time() - upload_start
             logger.error(f"❌ Lighthouse upload failed after {upload_duration:.1f}s: {e}")
-            return None
+            return None, current_time
         
         upload_duration = time.time() - upload_start
         
@@ -787,14 +801,14 @@ async def upload_to_lighthouse_and_cleanup(
                 except Exception as e:
                     logger.error(f"Failed to delete old CID {old_cid}: {e}")
             
-            return new_cid
+            return new_cid, current_time
         else:
             logger.error("Lighthouse upload failed - no CID returned")
-            return None
+            return None, current_time
             
     except Exception as e:
         logger.error(f"Lighthouse upload error: {e}", exc_info=True)
-        return None
+        return None, current_time
 
 
 def update_preview_with_analytics(
@@ -1017,13 +1031,17 @@ async def run_cycle(
     state: Dict[str, Any],
     dedupe: DedupeTracker,
     price_buffer: RollingPriceBuffer,
-    preview_state: PreviewStateTracker
-) -> Dict[str, Any]:
+    preview_state: PreviewStateTracker,
+    last_upload_time: Optional[float] = None
+) -> tuple[Dict[str, Any], float]:
     """
     Run one ingestion cycle with logs-first path, pool resolution, and early-stop guards.
     
+    Args:
+        last_upload_time: Unix timestamp of last Lighthouse upload
+    
     Returns:
-        Updated state dict
+        Tuple of (updated_state, new_last_upload_time)
     """
     from transform import extract_pool_tokens
     
@@ -1044,7 +1062,7 @@ async def run_cycle(
     except Exception as e:
         logger.error(f"Failed to get latest block: {e}")
         logger.warning("Skipping this cycle")
-        return state
+        return state, last_upload_time
     
     # Fetch ETH/USD price from Chainlink or infer from recent swaps
     eth_price_info = await fetch_eth_price_from_chainlink(
@@ -1261,11 +1279,12 @@ async def run_cycle(
     update_metadata(metadata_path, total_rows, schema_version=settings.SCHEMA_VERSION)
     logger.info(f"✓ Updated metadata: {total_rows} rows")
     
-    # Upload to Lighthouse (if enabled)
-    lighthouse_cid = await upload_to_lighthouse_and_cleanup(
+    # Upload to Lighthouse (if enabled and interval passed)
+    lighthouse_cid, last_upload_time = await upload_to_lighthouse_and_cleanup(
         jsonl_path=jsonl_path,
         metadata_path=metadata_path,
-        settings=settings
+        settings=settings,
+        last_upload_time=last_upload_time
     )
     if lighthouse_cid:
         logger.info(f"✓ Lighthouse CID: {lighthouse_cid}")
@@ -1439,7 +1458,7 @@ async def run_cycle(
     # Update state with preview timestamp for staleness detection
     new_state["last_preview_ts"] = preview_latest_ts
     
-    return new_state
+    return new_state, last_upload_time
 
 
 def main():
@@ -1540,6 +1559,9 @@ def main():
     preview_state_path = Path(settings.LAST_BLOCK_STATE_PATH).parent / "preview_state.json"
     preview_state = PreviewStateTracker.load(str(preview_state_path), max_size=10)
     
+    # Track last upload time to avoid uploading every cycle
+    last_upload_time = None
+    
     # Print dry-run summary
     print("")
     print("=" * 60)
@@ -1569,8 +1591,8 @@ def main():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    state = loop.run_until_complete(run_cycle(
-                        client, settings, state, dedupe, price_buffer, preview_state
+                    state, last_upload_time = loop.run_until_complete(run_cycle(
+                        client, settings, state, dedupe, price_buffer, preview_state, last_upload_time
                     ))
                     # Close client to prepare for next event loop
                     loop.run_until_complete(client.close())

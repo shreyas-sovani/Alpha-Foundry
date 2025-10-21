@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     LIGHTHOUSE_API_KEY: Optional[str] = ""
     LIGHTHOUSE_ENABLE_UPLOAD: bool = True
     LIGHTHOUSE_UPLOAD_TIMEOUT: int = 180  # Increased to 3 minutes for large files
+    LIGHTHOUSE_UPLOAD_INTERVAL: int = 300  # Upload every 5 minutes (not every cycle)
     
     class Config:
         env_file = ".env"

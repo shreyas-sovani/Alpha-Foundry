@@ -1,8 +1,5 @@
-[phases.setup]
-nixPkgs = ["python310Full"]
-
-[phases.install]
-cmds = ["python -m pip install --upgrade pip", "python -m pip install -r requirements.txt"]
+# Let Nixpacks auto-detect Python from requirements.txt
+# It will automatically create venv and install dependencies
 
 [start]
 cmd = "cd apps/worker && python run.py"

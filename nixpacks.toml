@@ -2,7 +2,7 @@
 # It will automatically create venv and install dependencies
 
 [phases.setup]
-nixPkgs = ["nodejs"]
+nixPkgs = ["python312", "nodejs"]
 
 [phases.install]
 cmds = [

@@ -43,9 +43,9 @@ logger = logging.getLogger(__name__)
 try:
     from lighthouse_sdk_integration import LighthouseSDK
     LIGHTHOUSE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     LIGHTHOUSE_AVAILABLE = False
-    logger.warning("Lighthouse SDK not available - file upload disabled")
+    logger.warning(f"Lighthouse SDK not available - file upload disabled: {e}")
 
 # Global HTTP server instance for cleanup
 http_server: Optional[ReadOnlyHTTPServer] = None

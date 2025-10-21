@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     
     # Lighthouse Integration - NEW
     LIGHTHOUSE_API_KEY: Optional[str] = ""  # API key for Lighthouse Storage
-    LIGHTHOUSE_ENABLE_UPLOAD: bool = False  # Enable automatic upload (default: False to avoid blocking)
+    LIGHTHOUSE_ENABLE_UPLOAD: bool = True  # Enable automatic upload (Railway will have this set)
     LIGHTHOUSE_UPLOAD_TIMEOUT: int = 60  # Upload timeout in seconds
     
     class Config:

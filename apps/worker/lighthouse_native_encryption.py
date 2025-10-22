@@ -288,10 +288,9 @@ uploadFile();
         Raises:
             Exception: If access control application fails
         """
-        # WORKAROUND: Use HTTP API directly for access control
-        # SDK's applyAccessCondition() has issues with parameter format
+        # Use Lighthouse SDK for access control
         script_content = """
-const axios = require('axios');
+const lighthouse = require('@lighthouse-web3/sdk');
 
 async function applyAccessControl() {
     const publicKey = process.argv[2];
@@ -301,39 +300,33 @@ async function applyAccessControl() {
     const aggregator = process.argv[6];
     
     try {
-        console.error(`DEBUG: Applying access control via HTTP API`);
-        console.error(`DEBUG: CID=${cid}, publicKey=${publicKey}`);
+        console.error(`DEBUG: Applying access control`);
+        console.error(`DEBUG: CID=${cid}`);
+        console.error(`DEBUG: publicKey=${publicKey}`);
         console.error(`DEBUG: Conditions: ${JSON.stringify(conditions, null, 2)}`);
+        console.error(`DEBUG: Aggregator: ${aggregator}`);
         
-        // Use HTTP API directly instead of SDK
-        const response = await axios.post(
-            'https://encryption.lighthouse.storage/api/access-condition/apply',
-            {
-                cid: cid,
-                publicKey: publicKey,
-                signedMessage: signedMessage,
-                conditions: conditions,
-                aggregator: aggregator
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                timeout: 30000
-            }
+        // Use Lighthouse SDK
+        const response = await lighthouse.applyAccessCondition(
+            publicKey,
+            cid,
+            signedMessage,
+            conditions
         );
         
-        console.error(`DEBUG: API response status: ${response.status}`);
-        console.log(JSON.stringify(response.data));
+        console.error(`DEBUG: SDK response: ${JSON.stringify(response)}`);
+        
+        if (response && response.data) {
+            console.log(JSON.stringify(response.data));
+        } else {
+            console.log(JSON.stringify({status: 'success', cid: cid}));
+        }
         process.exit(0);
     } catch (error) {
         console.error(JSON.stringify({
             error: error.message || 'Unknown error',
             stack: error.stack,
-            response: error.response ? {
-                status: error.response.status,
-                data: error.response.data
-            } : null
+            details: error.response ? error.response.data : null
         }));
         process.exit(1);
     }

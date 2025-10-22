@@ -3,22 +3,29 @@
 Lighthouse Storage Auto-Cleanup Service
 ========================================
 
-Automatically maintains only the latest file on Lighthouse storage.
-Runs after each successful upload to delete old versions.
+Automatically maintains protected files on Lighthouse storage.
+Runs after each successful upload to delete old versions while protecting critical files.
 
 FEATURES:
-- Keeps exactly 1 file (the latest)
+- Protects permanent CIDs (configured in code)
+- Protects latest uploaded file
+- Optionally protects additional CIDs
 - Integrates with worker upload cycle
 - Uses reliable Lighthouse CLI
-- Safe: Never deletes current file
+- Safe: Never deletes protected files
 - Atomic operations with rollback
 - Comprehensive logging
+
+PROTECTED FILES:
+- Two permanent CIDs are hardcoded and will NEVER be deleted
+- The latest uploaded file is always protected
+- Additional CIDs can be specified at initialization
 
 USAGE:
     from lighthouse_cleanup import LighthouseCleanup
     
     cleanup = LighthouseCleanup(api_key=settings.LIGHTHOUSE_API_KEY)
-    cleanup.cleanup_old_files(keep_latest_cid="QmXXX...")
+    cleanup.cleanup_old_files(protected_cid="QmXXX...")  # Protects latest + 2 permanent CIDs
 """
 
 import os
@@ -76,11 +83,18 @@ class LighthouseCleanup:
     CLI_COMMAND = "lighthouse-web3"
     DELETE_COMMAND = ["lighthouse-web3", "delete-file"]
     
+    # Permanently protected CIDs that should NEVER be deleted
+    PERMANENT_PROTECTED_CIDS = {
+        "bafybeih5j5recyxiwscbtjl7o5rmv22rijmeq552iovrguas45s4766yw4",
+        "bafkreie73wguaf7yucgzcudbkivtgtxzvyv2efjg24s76j67lu7cbt7vcy"
+    }
+    
     def __init__(
         self,
         api_key: str,
         verify_cli: bool = True,
-        min_files_to_keep: int = 1
+        min_files_to_keep: int = 1,
+        additional_protected_cids: Optional[List[str]] = None
     ):
         """
         Initialize cleanup service.
@@ -89,9 +103,19 @@ class LighthouseCleanup:
             api_key: Lighthouse API key
             verify_cli: Verify CLI is installed and configured
             min_files_to_keep: Minimum files to keep (safety threshold)
+            additional_protected_cids: Optional list of additional CIDs to protect
         """
         self.api_key = api_key
         self.min_files_to_keep = max(1, min_files_to_keep)
+        
+        # Build complete set of protected CIDs
+        self.protected_cids = set(self.PERMANENT_PROTECTED_CIDS)
+        if additional_protected_cids:
+            self.protected_cids.update(additional_protected_cids)
+        
+        logger.info(f"🛡️  Permanent protection enabled for {len(self.PERMANENT_PROTECTED_CIDS)} CIDs")
+        if additional_protected_cids:
+            logger.info(f"🛡️  Additional protection for {len(additional_protected_cids)} CIDs")
         
         if verify_cli:
             self._verify_cli_setup()
@@ -175,49 +199,51 @@ class LighthouseCleanup:
         self,
         all_files: List[LighthouseFile],
         protected_cid: Optional[str] = None
-    ) -> Tuple[LighthouseFile, List[LighthouseFile]]:
+    ) -> Tuple[List[LighthouseFile], List[LighthouseFile]]:
         """
         Identify which files to keep and delete.
         
         Args:
             all_files: All files from Lighthouse
-            protected_cid: Specific CID to protect (overrides newest)
+            protected_cid: Specific CID to protect (e.g., latest upload)
             
         Returns:
-            Tuple of (file_to_keep, files_to_delete)
+            Tuple of (files_to_keep, files_to_delete)
         """
         if not all_files:
             raise ValueError("No files to process")
         
-        # Determine which file to protect
+        # Build comprehensive set of CIDs to protect
+        cids_to_protect = set(self.protected_cids)  # Start with permanent + additional
+        
+        # Add the explicitly protected CID (e.g., latest upload)
         if protected_cid:
-            protected_file = next(
-                (f for f in all_files if f.cid == protected_cid),
-                None
-            )
-            if not protected_file:
-                logger.warning(
-                    f"⚠️  Protected CID not found: {protected_cid}, "
-                    f"using newest file"
-                )
-                protected_file = all_files[0]
+            cids_to_protect.add(protected_cid)
         else:
-            # Use newest file
-            protected_file = all_files[0]
+            # If no specific CID provided, protect the newest file
+            cids_to_protect.add(all_files[0].cid)
         
-        # All other files are candidates for deletion
-        files_to_delete = [
-            f for f in all_files 
-            if f.file_id != protected_file.file_id
-        ]
+        # Identify protected files and files to delete
+        protected_files = []
+        files_to_delete = []
         
-        logger.info(
-            f"🛡️  Protected: {protected_file.cid[:40]}... "
-            f"({protected_file.size_mb:.2f} MB)"
-        )
-        logger.info(f"🗑️  To delete: {len(files_to_delete)} files")
+        for file in all_files:
+            if file.cid in cids_to_protect:
+                protected_files.append(file)
+            else:
+                files_to_delete.append(file)
         
-        return protected_file, files_to_delete
+        # Log protection summary
+        logger.info(f"🛡️  Protected files: {len(protected_files)}")
+        for pf in protected_files:
+            reason = "PERMANENT" if pf.cid in self.PERMANENT_PROTECTED_CIDS else "LATEST"
+            logger.info(
+                f"     • {pf.cid[:40]}... ({pf.size_mb:.2f} MB) [{reason}]"
+            )
+        
+        logger.info(f"🗑️  Files to delete: {len(files_to_delete)}")
+        
+        return protected_files, files_to_delete
     
     def delete_file(self, file: LighthouseFile) -> bool:
         """
@@ -283,10 +309,15 @@ class LighthouseCleanup:
         dry_run: bool = False
     ) -> Dict[str, any]:
         """
-        Clean up old files, keeping only the latest.
+        Clean up old files, keeping only protected files.
+        
+        This method protects:
+        1. Permanent CIDs (configured in PERMANENT_PROTECTED_CIDS)
+        2. The latest uploaded file (protected_cid parameter or newest if not specified)
+        3. Any additional CIDs passed during initialization
         
         Args:
-            protected_cid: Specific CID to protect (optional)
+            protected_cid: Specific CID to protect (e.g., latest upload)
             dry_run: If True, don't actually delete files
             
         Returns:
@@ -298,7 +329,7 @@ class LighthouseCleanup:
                 "files_failed": int,
                 "files_remaining": int,
                 "space_saved_mb": float,
-                "protected_file": str (CID)
+                "protected_files": List[str] (CIDs)
             }
         """
         start_time = datetime.now()
@@ -307,9 +338,13 @@ class LighthouseCleanup:
             # List all files
             all_files = self.list_all_files()
             
-            if len(all_files) <= self.min_files_to_keep:
+            # Calculate minimum files to keep (permanent + dynamic)
+            min_protected = len(self.PERMANENT_PROTECTED_CIDS) + self.min_files_to_keep
+            
+            if len(all_files) <= min_protected:
                 logger.info(
-                    f"✅ Only {len(all_files)} file(s) - no cleanup needed"
+                    f"✅ Only {len(all_files)} file(s) - no cleanup needed "
+                    f"(minimum: {min_protected})"
                 )
                 return {
                     "success": True,
@@ -318,11 +353,11 @@ class LighthouseCleanup:
                     "files_failed": 0,
                     "files_remaining": len(all_files),
                     "space_saved_mb": 0.0,
-                    "protected_file": all_files[0].cid if all_files else None
+                    "protected_files": [f.cid for f in all_files]
                 }
             
             # Identify files to delete
-            protected_file, files_to_delete = self.identify_files_to_delete(
+            protected_files, files_to_delete = self.identify_files_to_delete(
                 all_files,
                 protected_cid
             )
@@ -336,7 +371,7 @@ class LighthouseCleanup:
                     "files_failed": 0,
                     "files_remaining": len(all_files),
                     "space_saved_mb": 0.0,
-                    "protected_file": protected_file.cid
+                    "protected_files": [f.cid for f in protected_files]
                 }
             
             if dry_run:
@@ -352,7 +387,7 @@ class LighthouseCleanup:
                     "files_failed": 0,
                     "files_remaining": len(all_files),
                     "space_saved_mb": space_to_save / (1024*1024),
-                    "protected_file": protected_file.cid
+                    "protected_files": [f.cid for f in protected_files]
                 }
             
             # Delete old files
@@ -384,7 +419,7 @@ class LighthouseCleanup:
                 "files_failed": failed_count,
                 "files_remaining": len(final_files),
                 "space_saved_mb": space_saved / (1024*1024),
-                "protected_file": protected_file.cid,
+                "protected_files": [f.cid for f in protected_files],
                 "elapsed_seconds": elapsed
             }
             
@@ -393,6 +428,7 @@ class LighthouseCleanup:
             logger.info("🎉 CLEANUP COMPLETE")
             logger.info(f"   Deleted: {deleted_count}/{len(files_to_delete)}")
             logger.info(f"   Failed: {failed_count}")
+            logger.info(f"   Protected: {len(protected_files)} files")
             logger.info(f"   Remaining: {len(final_files)} files")
             logger.info(f"   Space saved: {result['space_saved_mb']:.2f} MB")
             logger.info(f"   Time: {elapsed:.1f}s")
@@ -410,7 +446,7 @@ class LighthouseCleanup:
                 "files_failed": 0,
                 "files_remaining": 0,
                 "space_saved_mb": 0.0,
-                "protected_file": None
+                "protected_files": []
             }
 
 

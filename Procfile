@@ -1,1 +1,1 @@
-web: cd apps/worker && python run.py
+web: cd apps/worker && python3 run.py

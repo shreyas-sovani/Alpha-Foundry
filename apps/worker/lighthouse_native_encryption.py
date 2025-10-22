@@ -383,22 +383,11 @@ uploadWithEncryption();
                 # Don't set cwd - use global NODE_PATH instead
             )
             
-            # Debug: Print stderr even on success to see debug messages
+            # Debug: ALWAYS print ALL stderr to see comprehensive debugging
             if result.stderr:
-                # Try to parse as JSON error, otherwise print as-is
-                try:
-                    stderr_lines = result.stderr.strip().split('\n')
-                    # Last line should be the JSON error if failed
-                    if result.returncode != 0 and stderr_lines:
-                        error_json = json.loads(stderr_lines[-1])
-                        print(f"[Lighthouse Error] {error_json.get('error', 'Unknown error')}")
-                        if 'stack' in error_json:
-                            print(f"[Lighthouse Stack] {error_json['stack'][:500]}")
-                    else:
-                        # Just debug output
-                        print(f"[Lighthouse Debug] {result.stderr}")
-                except (json.JSONDecodeError, IndexError):
-                    print(f"[Lighthouse Debug] {result.stderr}")
+                print(f"[Lighthouse Debug Output]:")
+                print(result.stderr)
+                print(f"[End Debug Output]")
             
             if result.returncode != 0:
                 # Try to extract JSON error from stderr

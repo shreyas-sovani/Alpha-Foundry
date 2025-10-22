@@ -141,6 +141,7 @@ class LighthouseNativeEncryption:
         # Create temporary Node.js script for uploadEncrypted
         script_content = """
 const lighthouse = require('@lighthouse-web3/sdk');
+const fs = require('fs');
 
 async function uploadEncrypted() {
     const filePath = process.argv[2];
@@ -149,6 +150,18 @@ async function uploadEncrypted() {
     const signedMessage = process.argv[5];
     
     try {
+        // Debug: Check if file exists and is readable
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`File does not exist: ${filePath}`);
+        }
+        
+        const stats = fs.statSync(filePath);
+        if (!stats.isFile()) {
+            throw new Error(`Path is not a file: ${filePath}`);
+        }
+        
+        console.error(`DEBUG: File exists: ${filePath}, size: ${stats.size} bytes`);
+        
         const response = await lighthouse.uploadEncrypted(
             filePath,
             apiKey,
@@ -203,6 +216,10 @@ uploadEncrypted();
                 timeout=300,  # 5 minutes timeout
                 # Don't set cwd - use global NODE_PATH instead
             )
+            
+            # Debug: Print stderr even on success to see debug messages
+            if result.stderr:
+                print(f"[Lighthouse Debug] {result.stderr}")
             
             if result.returncode != 0:
                 error_msg = result.stderr or result.stdout

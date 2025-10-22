@@ -768,45 +768,57 @@ async def upload_to_lighthouse_and_cleanup(
             logger.info(f"   View: https://files.lighthouse.storage/viewFile/{new_cid}")
             
             # Update metadata with rich details (CID, encryption stats, gateway URL)
-            if metadata_path.exists():
-                try:
-                    with open(metadata_path, "r") as f:
-                        metadata = json.load(f)
-                    
-                    # Add Lighthouse fields with full details
-                    metadata["latest_cid"] = new_cid
-                    metadata["lighthouse_gateway"] = f"https://gateway.lighthouse.storage/ipfs/{new_cid}"
-                    metadata["lighthouse_updated"] = datetime.utcnow().isoformat() + "Z"
-                    
-                    # Add encryption stats if available
-                    encryption_data = result.get("encryption", {})
-                    if encryption_data:
-                        metadata["encryption"] = {
-                            "enabled": True,
-                            "algorithm": "AES-256-GCM",
-                            "encrypted_file": f"{jsonl_path.name}.enc",
-                            "encrypted_size": encryption_data.get("encrypted_size", 0),
-                            "original_size": encryption_data.get("original_size", 0),
-                            "sha256_encrypted": encryption_data.get("sha256_encrypted", "")[:20] + "...",
-                            "sha256_original": encryption_data.get("sha256_original", "")[:20] + "...",
-                            "status": "Encrypted and uploaded successfully"
-                        }
-                    
-                    metadata["last_lighthouse_upload"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-                    
-                    # Atomic write
-                    temp_path = metadata_path.with_suffix(".json.tmp")
-                    with open(temp_path, "w") as f:
-                        if USE_ORJSON:
-                            f.write(orjson.dumps(metadata, option=orjson.OPT_INDENT_2).decode("utf-8"))
-                        else:
-                            json.dump(metadata, f, indent=2)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    temp_path.replace(metadata_path)
-                    logger.info(f"✓ Metadata updated with CID and encryption details")
-                except Exception as e:
-                    logger.error(f"Failed to update metadata with CID: {e}")
+            # CRITICAL: Always update metadata, create if missing
+            try:
+                # Try to read existing metadata
+                metadata = {}
+                if metadata_path.exists():
+                    try:
+                        with open(metadata_path, "r") as f:
+                            # Use standard json to avoid orjson compatibility issues
+                            metadata = json.load(f)
+                        logger.debug(f"Read existing metadata: {len(metadata)} fields")
+                    except Exception as read_error:
+                        logger.warning(f"Could not read metadata, will recreate: {read_error}")
+                        metadata = {}
+                else:
+                    logger.warning(f"Metadata file doesn't exist yet, creating with CID")
+                
+                # Add Lighthouse fields with full details
+                metadata["latest_cid"] = new_cid
+                metadata["lighthouse_gateway"] = f"https://gateway.lighthouse.storage/ipfs/{new_cid}"
+                metadata["lighthouse_updated"] = datetime.utcnow().isoformat() + "Z"
+                
+                # Add encryption stats if available
+                encryption_data = result.get("encryption", {})
+                if encryption_data:
+                    metadata["encryption"] = {
+                        "enabled": True,
+                        "algorithm": "AES-256-GCM",
+                        "encrypted_file": f"{jsonl_path.name}.enc",
+                        "encrypted_size": encryption_data.get("encrypted_size", 0),
+                        "original_size": encryption_data.get("original_size", 0),
+                        "sha256_encrypted": encryption_data.get("sha256_encrypted", "")[:20] + "...",
+                        "sha256_original": encryption_data.get("sha256_original", "")[:20] + "...",
+                        "status": "Encrypted and uploaded successfully"
+                    }
+                
+                metadata["last_lighthouse_upload"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                
+                # Atomic write with fsync
+                temp_path = metadata_path.with_suffix(".json.tmp")
+                with open(temp_path, "w") as f:
+                    # Always use standard json for metadata (more compatible)
+                    json.dump(metadata, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                temp_path.replace(metadata_path)
+                logger.info(f"✓ Metadata updated with CID: {new_cid}")
+                logger.info(f"  Gateway: {metadata['lighthouse_gateway']}")
+            except Exception as e:
+                logger.error(f"❌ Failed to update metadata with CID: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
             
             # Auto-cleanup: Delete old files, keep only latest
             try:

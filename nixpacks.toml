@@ -1,5 +1,5 @@
 # Railway deployment configuration for Python worker with Lighthouse SDK
-# Extends auto-detected Python provider with Node.js for Lighthouse CLI
+# Extends auto-detected Python provider with Node.js for Lighthouse native encryption
 
 [phases.setup]
 nixPkgs = ["...", "nodejs"]
@@ -7,9 +7,8 @@ nixPkgs = ["...", "nodejs"]
 [phases.install]
 cmds = [
   "...",
-  "npm install -g @lighthouse-web3/sdk",
-  "lighthouse-web3 --version || echo 'Lighthouse CLI not found in PATH'",
-  "lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || echo 'API key import skipped'"
+  "cd apps/worker && npm install",
+  "echo 'Lighthouse SDK installed in apps/worker/node_modules/'"
 ]
 
 [start]

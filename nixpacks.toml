@@ -1,20 +1,20 @@
-# Extend Nixpacks auto-detection with Node.js for Lighthouse CLI
-# The "..." syntax extends the default provider behavior
+# Railway deployment configuration for Python worker
+# Skip Node.js package installation since we only need Lighthouse CLI globally
 
 [phases.setup]
-nixPkgs = ["...", "nodejs"]
+nixPkgs = ["python311", "nodejs"]
 
 [phases.install]
 cmds = [
-  "...",
+  # Install Python dependencies from worker directory
+  "pip install -r apps/worker/requirements.txt",
+  # Install Lighthouse SDK globally for CLI access
   "npm install -g @lighthouse-web3/sdk",
-  "ls -la /nix/store/*/bin/lighthouse-web3 || true",
-  "PATH=\"/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH\" lighthouse-web3 --version || true",
-  "PATH=\"/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH\" lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || true"
+  # Verify installation (optional, for debugging)
+  "lighthouse-web3 --version || echo 'Lighthouse CLI not found in PATH'",
+  # Import API key if available
+  "lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || echo 'API key import skipped'"
 ]
 
-[variables]
-PATH = "/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH"
-
 [start]
-cmd = "export PATH=\"/nix/store/jz54v1m0ldqivx5i45q8i05pz5clf842-nodejs-20.18.0/bin:$PATH\" && cd apps/worker && python run.py"
+cmd = "cd apps/worker && python run.py"

@@ -1,0 +1,15 @@
+# Ignore root package.json to prevent npm ci from running
+# Railway deployment only needs Python worker dependencies
+package.json
+package-lock.json
+node_modules/
+
+# Ignore frontend (deployed separately to Vercel)
+frontend/
+
+# Ignore development scripts (not needed in production)
+scripts/
+
+# Ignore state files (persisted externally)
+state/
+apps/worker/state/

@@ -1,1 +1,1 @@
-web: cd apps/worker && python3 run.py
+web: /opt/venv/bin/python apps/worker/run.py

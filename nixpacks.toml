@@ -13,5 +13,5 @@ cmds = [
 ]
 
 [start]
-cmd = "cd apps/worker && python3 run.py"
+cmd = "/opt/venv/bin/python apps/worker/run.py"
 

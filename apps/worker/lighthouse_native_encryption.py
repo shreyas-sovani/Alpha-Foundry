@@ -180,14 +180,17 @@ uploadEncrypted();
             print(f"[Lighthouse] Getting signed auth message...")
             signed_message = self._get_signed_message()
             
+            # Convert to absolute path - Lighthouse SDK requires absolute paths
+            abs_file_path = str(Path(file_path).resolve())
+            
             # Run Node.js script with uploadEncrypted
             # Use current directory as working directory so node can find node_modules
-            print(f"[Lighthouse] Uploading {file_path} with native encryption...")
+            print(f"[Lighthouse] Uploading {abs_file_path} with native encryption...")
             result = subprocess.run(
                 [
                     'node',
                     script_path,
-                    file_path,
+                    abs_file_path,
                     self.api_key,
                     self.wallet_address,
                     signed_message

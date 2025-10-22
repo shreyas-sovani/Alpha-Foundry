@@ -17,6 +17,7 @@ const DATACOIN_ADDRESS = process.env.NEXT_PUBLIC_DATACOIN_ADDRESS || '0x8d302FfB
 const FAUCET_ADDRESS = process.env.NEXT_PUBLIC_FAUCET_ADDRESS || '0xB0864079e5A5f898Da37ffF6c8bce762A2eD35BB'
 const MIN_BALANCE = parseFloat(process.env.NEXT_PUBLIC_MIN_BALANCE || '1.0')
 const AGENT_ADDRESS = process.env.NEXT_PUBLIC_AGENT_ADDRESS || '' // Your Agentverse agent address
+const DELTAV_API_KEY = process.env.NEXT_PUBLIC_DELTAV_API_KEY || '' // DeltaV API key (optional)
 
 // Minimal ABIs
 const DATACOIN_ABI = [
@@ -289,6 +290,58 @@ export default function UnlockPage() {
     }
   }
   
+  // Burn 1 DADC token to access data (pay-per-decrypt)
+  const burnTokenForAccess = async () => {
+    if (!signer || !walletState.address) {
+      throw new Error('Wallet not connected')
+    }
+    
+    const currentBalance = parseFloat(walletState.balance || '0')
+    if (currentBalance < 1.0) {
+      throw new Error('Insufficient balance. You need at least 1 DADC to decrypt.')
+    }
+    
+    const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD'
+    const BURN_AMOUNT = ethers.parseEther('1.0') // 1 DADC
+    
+    try {
+      console.log('🔥 Burning 1 DADC for access...')
+      console.log('   Current balance:', currentBalance, 'DADC')
+      
+      // Create DataCoin contract instance
+      const dataCoin = new ethers.Contract(
+        DATACOIN_ADDRESS,
+        ['function transfer(address to, uint256 amount) returns (bool)'],
+        signer
+      )
+      
+      // Execute burn (transfer to dead address)
+      const tx = await dataCoin.transfer(BURN_ADDRESS, BURN_AMOUNT)
+      console.log('   Transaction submitted:', tx.hash)
+      
+      setSuccess(`Burning 1 DADC... Tx: ${tx.hash.slice(0, 10)}...${tx.hash.slice(-8)}`)
+      
+      // Wait for confirmation
+      const receipt = await tx.wait()
+      console.log('   ✅ Burn confirmed in block:', receipt.blockNumber)
+      console.log('   New balance will be:', currentBalance - 1, 'DADC')
+      
+      // Update balance display
+      if (provider && walletState.address) {
+        await new Promise(resolve => setTimeout(resolve, 1000)) // Wait for state to update
+        await updateWalletState(walletState.address, walletState.chainId!, provider)
+      }
+      
+      return receipt
+    } catch (err: any) {
+      console.error('❌ Burn failed:', err)
+      if (err.code === 'ACTION_REJECTED' || err.message?.includes('user rejected')) {
+        throw new Error('Transaction cancelled by user')
+      }
+      throw new Error(`Failed to burn tokens: ${err.message}`)
+    }
+  }
+  
   // Unlock and decrypt data using Lighthouse SDK
   const unlockData = async () => {
     if (!walletState.isEligible) {
@@ -317,16 +370,32 @@ export default function UnlockPage() {
       console.log('   Wallet:', walletState.address)
       console.log('   Balance:', walletState.balance, 'DADC')
       
-      // Step 1: Get signed message for Lighthouse access control
-      setSuccess('Step 1/3: Requesting signature for access control...')
+      // 🔥 Step 1: Burn 1 DADC for access (NEW!)
+      setSuccess('Step 1/4: Burning 1 DADC for access...')
+      
+      const currentBalance = parseFloat(walletState.balance || '0')
+      console.log('   Current balance:', currentBalance, 'DADC')
+      
+      if (currentBalance < 1.0) {
+        throw new Error('Insufficient balance. You need at least 1 DADC to decrypt.')
+      }
+      
+      await burnTokenForAccess()
+      
+      const remainingBalance = currentBalance - 1
+      console.log('   ✅ 1 DADC burned, remaining:', remainingBalance, 'DADC')
+      console.log('   → You have', Math.floor(remainingBalance), 'decrypts left')
+      
+      // Step 2: Get signed message for Lighthouse access control
+      setSuccess(`Step 2/4: Requesting signature... (${Math.floor(remainingBalance)} decrypts remaining)`)
       
       const address = walletState.address!
       const messageRequested: any = await lighthouse.getAuthMessage(address)
       
       console.log('   Message to sign:', messageRequested)
       
-      // Step 2: Sign the message
-      setSuccess('Step 2/3: Please sign the message in MetaMask...')
+      // Step 3: Sign the message
+      setSuccess('Step 3/4: Please sign the message in MetaMask...')
       
       // Access the message from the response (could be .message or direct string)
       const messageToSign = typeof messageRequested === 'string' 
@@ -337,8 +406,8 @@ export default function UnlockPage() {
       
       console.log('   ✅ Message signed')
       
-      // Step 3: Fetch decryption key (Lighthouse will check ERC20 balance)
-      setSuccess('Step 3/3: Fetching decryption key (checking token balance)...')
+      // Step 4: Fetch decryption key (Lighthouse will check ERC20 balance)
+      setSuccess('Step 4/4: Fetching decryption key (verifying balance)...')
       
       const keyObject: any = await lighthouse.fetchEncryptionKey(
         metadata.latest_cid,
@@ -394,7 +463,12 @@ export default function UnlockPage() {
       console.log('   Decrypted data preview:', decryptedText.substring(0, 200))
       
       setDecryptedData(decryptedText)
-      setSuccess('🎉 Data unlocked and decrypted successfully!')
+      
+      // Show success with remaining balance
+      const finalBalance = currentBalance - 1
+      setSuccess(
+        `🎉 Data unlocked! 1 DADC burned. You have ${Math.floor(finalBalance)} decrypt${Math.floor(finalBalance) === 1 ? '' : 's'} remaining.`
+      )
       
     } catch (err: any) {
       console.error('❌ Decryption error:', err)
@@ -403,6 +477,10 @@ export default function UnlockPage() {
         setError('Access denied: Your wallet does not have sufficient DADC tokens.')
       } else if (err.message?.includes('not found')) {
         setError('Encrypted file not found on Lighthouse. It may still be uploading.')
+      } else if (err.message?.includes('Insufficient balance')) {
+        setError(err.message)
+      } else if (err.message?.includes('cancelled') || err.message?.includes('rejected')) {
+        setError('Transaction cancelled by user.')
       } else {
         setError(`Failed to decrypt data: ${err.message}`)
       }
@@ -428,9 +506,9 @@ export default function UnlockPage() {
     setSuccess('✅ Downloaded decrypted data!')
   }
   
-  // Agent chat: Send message and get AI response
+  // Agent chat: Send message to Agentverse hosted agent
   const sendChatMessage = async () => {
-    if (!chatInput.trim() || isSendingMessage) return
+    if (!chatInput.trim() || isSendingMessage || !AGENT_ADDRESS) return
     
     const userMessage = chatInput.trim()
     setChatInput('')
@@ -440,34 +518,46 @@ export default function UnlockPage() {
     setIsSendingMessage(true)
     
     try {
-      // Simple AI-like responses based on metadata/preview data
-      let response = ''
+      // Call the Agentverse agent via HTTP POST
+      // Your agent should expose an HTTP endpoint that accepts messages
+      const agentUrl = `https://agentverse.ai/v1/agents/agent1qfaxddhl2eqg4de26pvhcvsja3j7rz7wwh0da5t58cvyws9rq9q36zrvesd/submit`
       
-      const lowerQuery = userMessage.toLowerCase()
+      const response = await fetch(agentUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(DELTAV_API_KEY && { 'Authorization': `Bearer ${DELTAV_API_KEY}` })
+        },
+        body: JSON.stringify({
+          message: userMessage,
+          context: {
+            metadata_endpoint: `${METADATA_API}/metadata`,
+            preview_endpoint: `${METADATA_API}/preview`
+          }
+        })
+      })
       
-      if (lowerQuery.includes('how many') || lowerQuery.includes('total') || lowerQuery.includes('rows')) {
-        response = `Currently tracking **${metadata?.rows || 0} DEX arbitrage opportunities**. The data is updated every 5 minutes from Ethereum mainnet.`
-      } else if (lowerQuery.includes('latest') || lowerQuery.includes('recent') || lowerQuery.includes('new')) {
-        response = `Latest data update: **${metadata?.last_updated ? new Date(metadata.last_updated).toLocaleString() : 'N/A'}**. The dataset contains ${metadata?.rows || 0} rows and is ${metadata?.freshness_minutes === 0 ? 'fresh (just updated!)' : `${metadata?.freshness_minutes} minutes old`}.`
-      } else if (lowerQuery.includes('encrypted') || lowerQuery.includes('decrypt') || lowerQuery.includes('unlock')) {
-        response = `The data is encrypted using **Lighthouse native encryption** with ERC20 token-gating. You need at least **${MIN_BALANCE} DADC tokens** to decrypt. Connect your wallet and claim tokens from the faucet above!`
-      } else if (lowerQuery.includes('cid') || lowerQuery.includes('ipfs')) {
-        response = metadata?.latest_cid 
-          ? `Latest encrypted file CID: **${metadata.latest_cid}**\n\nView on Lighthouse: https://files.lighthouse.storage/viewFile/${metadata.latest_cid}`
-          : 'No encrypted file available yet. The backend is still processing data.'
-      } else if (lowerQuery.includes('help') || lowerQuery.includes('what can')) {
-        response = `I can help you with:\n\n• **Data statistics**: "How many rows?", "When was it updated?"\n• **Encryption info**: "How do I decrypt the data?"\n• **Latest updates**: "What's new?"\n• **IPFS/CID info**: "Show me the CID"\n\nThe data contains real-time DEX arbitrage opportunities from Ethereum mainnet, encrypted and token-gated for your security.`
-      } else {
-        response = `I understand you're asking about: "${userMessage}"\n\nHere's what I know:\n• **Total opportunities**: ${metadata?.rows || 0}\n• **Last updated**: ${metadata?.last_updated ? new Date(metadata.last_updated).toLocaleString() : 'N/A'}\n• **Encryption**: Active (requires ${MIN_BALANCE} DADC)\n• **Data freshness**: ${metadata?.freshness_minutes === 0 ? 'Just updated!' : `${metadata?.freshness_minutes} min old`}\n\nTry asking: "How many rows?", "Show latest", or "How to decrypt?"`
+      if (!response.ok) {
+        throw new Error(`Agent responded with status ${response.status}`)
       }
       
-      // Add agent response
-      setChatMessages(prev => [...prev, { role: 'agent', text: response }])
+      const data = await response.json()
       
-    } catch (err) {
+      // Extract agent's response
+      const agentResponse = data.response || data.message || data.text || 'Agent did not provide a response.'
+      
+      // Add agent response
+      setChatMessages(prev => [...prev, { role: 'agent', text: agentResponse }])
+      
+    } catch (err: any) {
+      console.error('Agent communication error:', err)
+      
+      // Fallback: If agent is not reachable, provide helpful error
+      const errorMessage = `⚠️ Cannot reach agent. Error: ${err.message}\n\nPlease ensure:\n1. Agent address is configured\n2. Agent is running on Agentverse\n3. Agent HTTP endpoint is accessible`
+      
       setChatMessages(prev => [...prev, { 
         role: 'agent', 
-        text: '❌ Sorry, I encountered an error. Please try again.' 
+        text: errorMessage
       }])
     } finally {
       setIsSendingMessage(false)
@@ -476,13 +566,18 @@ export default function UnlockPage() {
   
   // Initialize chat with welcome message
   useEffect(() => {
-    if (showAgentChat && chatMessages.length === 0) {
+    if (showAgentChat && chatMessages.length === 0 && AGENT_ADDRESS) {
       setChatMessages([{
         role: 'agent',
-        text: `👋 Hi! I'm your DEXArb AI assistant. I can help you explore the encrypted arbitrage data.\n\nCurrently tracking **${metadata?.rows || 0} opportunities** (updated ${metadata?.last_updated ? new Date(metadata.last_updated).toLocaleTimeString() : 'recently'}).\n\nAsk me about data stats, encryption, or the latest updates!`
+        text: `👋 Hi! I'm your DEXArb AI agent hosted on Agentverse.\n\nI can analyze the latest arbitrage data and provide insights.\n\nAgent Address: ${AGENT_ADDRESS.substring(0, 12)}...${AGENT_ADDRESS.substring(AGENT_ADDRESS.length - 8)}\n\nAsk me anything about the data!`
+      }])
+    } else if (showAgentChat && !AGENT_ADDRESS) {
+      setChatMessages([{
+        role: 'agent',
+        text: `⚠️ Agent not configured!\n\nPlease set NEXT_PUBLIC_AGENT_ADDRESS in your environment variables.\n\nGet your agent address from: https://agentverse.ai`
       }])
     }
-  }, [showAgentChat, metadata])
+  }, [showAgentChat])
   
   // Render
   return (
@@ -546,6 +641,9 @@ export default function UnlockPage() {
                   {walletState.balance ? (
                     <span>
                       {parseFloat(walletState.balance).toFixed(2)} DADC
+                      <div className="text-xs text-gray-400 mt-1">
+                        ≈ {Math.floor(parseFloat(walletState.balance))} decrypt{Math.floor(parseFloat(walletState.balance)) === 1 ? '' : 's'} available
+                      </div>
                     </span>
                   ) : (
                     <span className="text-gray-500">Loading...</span>
@@ -716,9 +814,36 @@ export default function UnlockPage() {
         {walletState.isEligible && metadata?.latest_cid && (
           <div className="bg-gradient-to-r from-green-900/50 to-blue-900/50 backdrop-blur rounded-xl p-6 mb-6 border border-green-700">
             <h2 className="text-2xl font-bold mb-4">🔓 Unlock & Decrypt Data</h2>
+            
+            {/* Cost Warning */}
+            {!decryptedData && (
+              <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 mb-4">
+                <p className="text-yellow-300 font-semibold mb-2">
+                  🔥 Cost: 1 DADC per decrypt
+                </p>
+                <p className="text-sm text-gray-300">
+                  Clicking "Unlock & Decrypt" will burn 1 DADC token (non-refundable). 
+                  You have <strong>{Math.floor(parseFloat(walletState.balance || '0'))} decrypt{Math.floor(parseFloat(walletState.balance || '0')) === 1 ? '' : 's'}</strong> available 
+                  with your current balance.
+                </p>
+              </div>
+            )}
+            
             <p className="text-gray-300 mb-6">
-              You're eligible to access the encrypted data! Click below to decrypt using Lighthouse SDK.
+              {!decryptedData ? 
+                'Ready to access encrypted data! The decryption process will:' :
+                'Data successfully decrypted! You can download the full file below.'
+              }
             </p>
+            
+            {!decryptedData && (
+              <ul className="text-gray-300 text-sm list-disc list-inside mb-6 space-y-1">
+                <li>Burn 1 DADC token to 0xdead address</li>
+                <li>Verify your balance on Sepolia blockchain</li>
+                <li>Decrypt the data using Lighthouse SDK</li>
+                <li>Display the decrypted JSONL content</li>
+              </ul>
+            )}
             
             {!decryptedData ? (
               <button
@@ -726,7 +851,7 @@ export default function UnlockPage() {
                 disabled={isDecrypting}
                 className="btn-primary text-lg px-8 py-4 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isDecrypting ? '🔄 Decrypting...' : '🔓 Unlock & Decrypt Data'}
+                {isDecrypting ? '🔄 Decrypting...' : '� Burn 1 DADC & Unlock Data'}
               </button>
             ) : (
               <div className="space-y-4">
@@ -805,19 +930,32 @@ export default function UnlockPage() {
               <div>
                 <h3 className="font-semibold text-lg mb-2">What happens when I unlock data?</h3>
                 <p className="text-gray-300">
-                  1. You'll be asked to sign a message (no gas fee)<br />
-                  2. Lighthouse checks your DADC token balance<br />
-                  3. If eligible, you receive the decryption key<br />
-                  4. Data is decrypted in your browser<br />
-                  5. You can download the full JSONL file
+                  1. You burn 1 DADC token (sent to 0xdead address)<br />
+                  2. You sign a message to prove wallet ownership (no gas)<br />
+                  3. Lighthouse checks your remaining DADC balance<br />
+                  4. If balance ≥1 DADC, you receive the decryption key<br />
+                  5. Data is decrypted in your browser<br />
+                  6. You can download the full JSONL file
+                </p>
+              </div>
+              
+              <div>
+                <h3 className="font-semibold text-lg mb-2">Why burn tokens?</h3>
+                <p className="text-gray-300">
+                  Pay-per-decrypt model: 1 DADC = 1 decryption access. Burning tokens creates scarcity 
+                  and deflationary pressure. With 100 DADC, you get exactly 100 decryptions. 
+                  Track burns on-chain at{' '}
+                  <a href="https://sepolia.etherscan.io/address/0x000000000000000000000000000000000000dEaD" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+                    0xdead
+                  </a>.
                 </p>
               </div>
               
               <div>
                 <h3 className="font-semibold text-lg mb-2">Is my data secure?</h3>
                 <p className="text-gray-300">
-                  Yes! The data is encrypted with AES-256-GCM and stored on Lighthouse (IPFS).
-                  Only wallets holding ≥1 DADC token can decrypt it. Your private keys never leave your browser.
+                  Yes! The data is encrypted with Lighthouse native encryption and stored on IPFS.
+                  Only wallets with ≥1 DADC token can decrypt it. Your private keys never leave your browser.
                 </p>
               </div>
               

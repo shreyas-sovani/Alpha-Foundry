@@ -70,6 +70,15 @@ class Settings(BaseSettings):
     LIGHTHOUSE_UPLOAD_TIMEOUT: int = 180  # Increased to 3 minutes for large files
     LIGHTHOUSE_UPLOAD_INTERVAL: int = 300  # Upload every 5 minutes (not every cycle)
     
+    # Lighthouse Native Encryption (for ERC20 token-gating)
+    LIGHTHOUSE_WALLET_PRIVATE_KEY: Optional[str] = ""  # For signing auth messages
+    LIGHTHOUSE_USE_NATIVE_ENCRYPTION: bool = True  # Use native encryption vs custom AES
+    
+    # DataCoin ERC20 Token-Gating
+    DATACOIN_CONTRACT_ADDRESS: str = "0x8d302FfB73134235EBaD1B9Cd9C202d14f906FeC"
+    DATACOIN_CHAIN: str = "Sepolia"
+    DATACOIN_MIN_BALANCE: float = 1.0  # Minimum DADC tokens required for access
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
@@ -133,6 +142,12 @@ class Settings(BaseSettings):
         print(f"    - Upload enabled: {'✅' if self.LIGHTHOUSE_ENABLE_UPLOAD else '❌'}")
         print(f"    - API key: {'✅ SET' if self.LIGHTHOUSE_API_KEY else '❌ NOT SET'}")
         print(f"    - Upload timeout: {self.LIGHTHOUSE_UPLOAD_TIMEOUT}s")
+        print(f"    - Native encryption: {'✅' if self.LIGHTHOUSE_USE_NATIVE_ENCRYPTION else '❌ (Custom AES)'}")
+        print(f"    - Wallet (signing): {'✅ SET' if self.LIGHTHOUSE_WALLET_PRIVATE_KEY else '❌ NOT SET'}")
+        print(f"\n  🎫 ERC20 TOKEN-GATING:")
+        print(f"    - Contract: {self._redact_address(self.DATACOIN_CONTRACT_ADDRESS)}")
+        print(f"    - Chain: {self.DATACOIN_CHAIN}")
+        print(f"    - Min balance: {self.DATACOIN_MIN_BALANCE} DADC")
         print(f"\n  📊 STRATEGY:")
         print(f"    - Window: {self.WINDOW_STRATEGY.upper()}")
         print(f"    - Early-stop: {self.EARLY_STOP_MODE or self.WINDOW_STRATEGY} (auto)")

@@ -26,6 +26,15 @@ from state import read_state, write_state, DedupeTracker, RollingPriceBuffer, Pr
 from http_server import ReadOnlyHTTPServer
 from chainlink_price import fetch_eth_price_from_chainlink, infer_eth_price_from_swaps
 
+# Lighthouse native encryption (optional, for token-gating)
+try:
+    from lighthouse_native_encryption import LighthouseNativeEncryption
+    LIGHTHOUSE_NATIVE_AVAILABLE = True
+except ImportError:
+    LIGHTHOUSE_NATIVE_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("lighthouse_native_encryption not available - using custom AES encryption")
+
 
 # Load environment variables
 load_dotenv()
@@ -751,18 +760,54 @@ async def upload_to_lighthouse_and_cleanup(
         
         # Run blocking upload in thread pool executor with timeout
         loop = asyncio.get_event_loop()
+        
+        # Choose encryption method based on settings
+        use_native = (
+            settings.LIGHTHOUSE_USE_NATIVE_ENCRYPTION and
+            LIGHTHOUSE_NATIVE_AVAILABLE and
+            settings.LIGHTHOUSE_WALLET_PRIVATE_KEY
+        )
+        
+        if use_native:
+            logger.info("🔐 Using Lighthouse native encryption with ERC20 token-gating")
+            logger.info(f"   Chain: {settings.DATACOIN_CHAIN}, Min balance: {settings.DATACOIN_MIN_BALANCE} DADC")
+        else:
+            logger.info("🔐 Using custom AES-256-GCM encryption")
+        
         try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    lambda: lighthouse.encrypt_and_upload(
-                        input_path=jsonl_path,
-                        tag=f"dexarb_{settings.NETWORK_LABEL}",
-                        keep_encrypted=False  # Don't keep .enc file
-                    )
-                ),
-                timeout=settings.LIGHTHOUSE_UPLOAD_TIMEOUT
-            )
+            if use_native:
+                # Use Lighthouse native encryption with token-gating
+                lighthouse_native = LighthouseNativeEncryption(
+                    api_key=settings.LIGHTHOUSE_API_KEY,
+                    private_key=settings.LIGHTHOUSE_WALLET_PRIVATE_KEY
+                )
+                
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: lighthouse_native.encrypt_and_upload_with_gating(
+                            file_path=str(jsonl_path),
+                            tag=f"dexarb_{settings.NETWORK_LABEL}",
+                            datacoin_address=settings.DATACOIN_CONTRACT_ADDRESS,
+                            chain=settings.DATACOIN_CHAIN,
+                            min_balance_dadc=settings.DATACOIN_MIN_BALANCE
+                        )
+                    ),
+                    timeout=settings.LIGHTHOUSE_UPLOAD_TIMEOUT
+                )
+            else:
+                # Fallback to custom AES encryption
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: lighthouse.encrypt_and_upload(
+                            input_path=jsonl_path,
+                            tag=f"dexarb_{settings.NETWORK_LABEL}",
+                            keep_encrypted=False  # Don't keep .enc file
+                        )
+                    ),
+                    timeout=settings.LIGHTHOUSE_UPLOAD_TIMEOUT
+                )
         except asyncio.TimeoutError:
             upload_duration = time.time() - upload_start
             logger.error(f"❌ Lighthouse upload timed out after {upload_duration:.1f}s")
@@ -775,9 +820,14 @@ async def upload_to_lighthouse_and_cleanup(
         
         upload_duration = time.time() - upload_start
         
-        # Extract CID from nested result
-        upload_data = result.get("upload", {})
-        new_cid = upload_data.get("cid")
+        # Extract CID from result (format differs between native and custom encryption)
+        if use_native:
+            # Native encryption returns flat structure
+            new_cid = result.get("cid")
+        else:
+            # Custom AES returns nested structure
+            upload_data = result.get("upload", {})
+            new_cid = upload_data.get("cid")
         
         if new_cid:
             logger.info(f"✅ Lighthouse upload successful in {upload_duration:.2f}s")
@@ -806,18 +856,41 @@ async def upload_to_lighthouse_and_cleanup(
                 metadata["lighthouse_gateway"] = f"https://gateway.lighthouse.storage/ipfs/{new_cid}"
                 metadata["lighthouse_updated"] = datetime.utcnow().isoformat() + "Z"
                 
-                # Add encryption stats if available
-                encryption_data = result.get("encryption", {})
-                if encryption_data:
-                    metadata["encryption"] = {
-                        "enabled": True,
-                        "algorithm": "AES-256-GCM",
-                        "encrypted_file": f"{jsonl_path.name}.enc",
-                        "encrypted_size": encryption_data.get("encrypted_size", 0),
-                        "original_size": encryption_data.get("original_size", 0),
-                        "sha256_encrypted": encryption_data.get("sha256_encrypted", "")[:20] + "...",
-                        "sha256_original": encryption_data.get("sha256_original", "")[:20] + "...",
-                        "status": "Encrypted and uploaded successfully"
+                # Add encryption method indicator
+                if use_native:
+                    # Lighthouse native encryption with token-gating
+                    metadata["encryption"] = result.get("encryption", "Lighthouse Native")
+                    
+                    # Add access control info if present
+                    access_control = result.get("access_control")
+                    if access_control:
+                        metadata["access_control"] = {
+                            "enabled": True,
+                            "type": "ERC20",
+                            "contract": access_control.get("contract"),
+                            "chain": access_control.get("chain"),
+                            "min_balance": access_control.get("min_balance"),
+                            "status": access_control.get("status"),
+                            "applied_at": datetime.utcnow().isoformat() + "Z"
+                        }
+                        logger.info(f"✅ Token-gating active: {access_control.get('min_balance')} on {access_control.get('chain')}")
+                else:
+                    # Custom AES encryption (old method)
+                    encryption_data = result.get("encryption", {})
+                    if encryption_data:
+                        metadata["encryption"] = {
+                            "enabled": True,
+                            "algorithm": "AES-256-GCM",
+                            "encrypted_file": f"{jsonl_path.name}.enc",
+                            "encrypted_size": encryption_data.get("encrypted_size", 0),
+                            "original_size": encryption_data.get("original_size", 0),
+                            "sha256_encrypted": encryption_data.get("sha256_encrypted", "")[:20] + "...",
+                            "sha256_original": encryption_data.get("sha256_original", "")[:20] + "...",
+                            "status": "Encrypted and uploaded successfully"
+                        }
+                    metadata["access_control"] = {
+                        "enabled": False,
+                        "note": "Using custom AES encryption (not token-gated)"
                     }
                 
                 metadata["last_lighthouse_upload"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")

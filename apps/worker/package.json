@@ -1,0 +1,9 @@
+{
+  "name": "worker-lighthouse-integration",
+  "version": "1.0.0",
+  "description": "Node.js dependencies for Lighthouse native encryption",
+  "dependencies": {
+    "@lighthouse-web3/sdk": "^0.4.3",
+    "ethers": "^6.0.0"
+  }
+}

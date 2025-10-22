@@ -41,3 +41,4 @@ Thumbs.db
 *.swp
 *.swo
 *~
+apps/worker/node_modules/

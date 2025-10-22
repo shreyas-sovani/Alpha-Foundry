@@ -356,9 +356,37 @@ export default function UnlockPage() {
       )
       
       console.log('   ✅ File decrypted successfully')
-      console.log('   Decrypted data preview:', decrypted.substring(0, 200))
+      console.log('   Decrypted type:', typeof decrypted, decrypted?.constructor?.name)
       
-      setDecryptedData(decrypted)
+      // Convert decrypted data to string (handle Blob, ArrayBuffer, or direct string)
+      let decryptedText: string
+      
+      if (typeof decrypted === 'string') {
+        decryptedText = decrypted
+      } else if (decrypted instanceof Blob) {
+        // If it's a Blob, read it as text
+        decryptedText = await decrypted.text()
+      } else if (decrypted instanceof ArrayBuffer) {
+        // If it's an ArrayBuffer, decode to string
+        decryptedText = new TextDecoder().decode(decrypted)
+      } else if (decrypted?.data) {
+        // If wrapped in object with .data property
+        const data = decrypted.data
+        if (typeof data === 'string') {
+          decryptedText = data
+        } else if (data instanceof Blob) {
+          decryptedText = await data.text()
+        } else {
+          decryptedText = JSON.stringify(data, null, 2)
+        }
+      } else {
+        // Fallback: try to convert to string
+        decryptedText = String(decrypted)
+      }
+      
+      console.log('   Decrypted data preview:', decryptedText.substring(0, 200))
+      
+      setDecryptedData(decryptedText)
       setSuccess('🎉 Data unlocked and decrypted successfully!')
       
     } catch (err: any) {

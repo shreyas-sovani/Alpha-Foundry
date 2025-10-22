@@ -147,12 +147,12 @@ class LighthouseNativeEncryption:
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
 const path = require('path');
-const { Wallet } = require('ethers');
+const ethers = require('ethers');
 
 async function uploadWithEncryption() {
     const filePath = process.argv[2];
     const apiKey = process.argv[3];
-    const privateKey = process.argv[4];  // Changed: now receiving private key instead of publicKey
+    const privateKey = process.argv[4];  // Private key for signing
     
     try {
         console.error(`\\n========== COMPREHENSIVE LIGHTHOUSE DEBUGGING ==========`);
@@ -228,12 +228,20 @@ async function uploadWithEncryption() {
             throw new Error(`Invalid privateKey format: length ${privateKey.length} (need 0x prefix + 64 hex chars = 66 total)`);
         }
         
-        // Create signer from private key
-        const signer = new Wallet(privateKey);
-        const publicKey = signer.address;
+        // Create wallet signer (no provider needed for signing)
+        const wallet = new ethers.Wallet(privateKey);
+        const publicKey = wallet.address;
         
         console.error(`  ✓ Signer created successfully`);
         console.error(`  ✓ Derived address: ${publicKey}`);
+        
+        // Get signed message for authentication
+        const messageText = await fetch(
+            \`https://api.lighthouse.storage/api/auth/get_message?publicKey=\${publicKey}\`
+        ).then(r => r.json()).then(data => data.message || data);
+        
+        const signedMessage = await wallet.signMessage(messageText);
+        console.error(`  ✓ Signed message: ${signedMessage.substring(0, 20)}...`);
         
         // ===== DEBUG TIP #5: SDK method availability =====
         console.error(`\\n[TIP #5] SDK METHOD CHECK:`);
@@ -273,22 +281,22 @@ async function uploadWithEncryption() {
             throw new Error(`Basic upload failed: ${testError.message}`);
         }
         
-        // ===== NOW TRY ENCRYPTED UPLOAD WITH SIGNER =====
-        console.error(`\\n[UPLOAD] Using uploadEncrypted() with signer object...`);
-        console.error(`  → filePath: ${filePath}`);
+        // ===== NOW TRY ENCRYPTED UPLOAD WITH TEXT METHOD =====
+        console.error(`\\n[UPLOAD] Using textUploadEncrypted() with file content...`);
+        console.error(`  → fileContent length: ${fileContent.length} chars`);
         console.error(`  → apiKey: ${apiKey.substring(0, 10)}...`);
-        console.error(`  → signer.address: ${signer.address}`);
+        console.error(`  → publicKey: ${publicKey}`);
         
         let response;
         const startTime = Date.now();
         
         try {
-            // CRITICAL FIX: Pass signer object, NOT publicKey + signedMessage
-            // This is the correct way to use uploadEncrypted() in SDK 0.4.3+
-            response = await lighthouse.uploadEncrypted(
-                filePath,      // Pass file path directly
-                apiKey,        // API key
-                signer         // Wallet signer object (creates encryption keys internally)
+            // Try textUploadEncrypted with the content we already read
+            response = await lighthouse.textUploadEncrypted(
+                fileContent,
+                apiKey,
+                publicKey,
+                signedMessage
             );
             const elapsed = Date.now() - startTime;
             console.error(`\\n[SUCCESS] uploadEncrypted() completed in ${elapsed}ms ✓`);

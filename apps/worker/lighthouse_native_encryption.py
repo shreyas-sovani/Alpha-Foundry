@@ -378,7 +378,17 @@ uploadWithEncryption();
             )
             message_response.raise_for_status()
             message_data = message_response.json()
-            message_to_sign = message_data if isinstance(message_data, str) else message_data.get("message", "")
+            
+            # Handle different response formats (string, dict, or list)
+            if isinstance(message_data, str):
+                message_to_sign = message_data
+            elif isinstance(message_data, dict):
+                message_to_sign = message_data.get("message", "")
+            elif isinstance(message_data, list) and len(message_data) > 0:
+                # If it's a list, take the first element
+                message_to_sign = message_data[0] if isinstance(message_data[0], str) else message_data[0].get("message", "")
+            else:
+                raise Exception(f"Unexpected message format: {type(message_data)} - {message_data}")
             
             print(f"[Lighthouse] Message to sign: {message_to_sign[:50]}...")
             

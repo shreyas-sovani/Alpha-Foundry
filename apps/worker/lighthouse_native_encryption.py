@@ -120,9 +120,11 @@ class LighthouseNativeEncryption:
         """
         Upload file with Lighthouse native encryption.
         
-        CRITICAL INSIGHT: The SDK's uploadEncrypted() is BROKEN internally.
-        New approach: Use text() method for browser-compatible encryption,
-        or use upload() + manual encryption via textToEncrypt() API.
+        CRITICAL FIX: The SDK's uploadEncrypted() is BROKEN internally.
+        SOLUTION: Use textUploadEncrypted() method for text content encryption.
+        
+        This reads the file as text, encrypts it with Kavach SDK, and uploads
+        to Lighthouse with distributed key shards for token-gated access.
         
         Args:
             file_path: Absolute path to file to upload
@@ -138,9 +140,9 @@ class LighthouseNativeEncryption:
         Raises:
             Exception: If upload fails or Node.js subprocess errors
         """
-        # NEW APPROACH: Use textToEncrypt() API for encryption + regular upload
+        # CORRECTED APPROACH: Use textUploadEncrypted() API (not textToEncrypt!)
         # uploadEncrypted() is broken in SDK - fails at line 43 (encryption step)
-        # Alternative: Encrypt via Lighthouse API, then upload encrypted content
+        # textUploadEncrypted() encrypts text content and uploads in one call
         script_content = """
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
@@ -160,19 +162,18 @@ async function uploadWithEncryption() {
         const fileContent = fs.readFileSync(filePath, 'utf8');
         const stats = fs.statSync(filePath);
         console.error(`DEBUG: File size: ${stats.size} bytes`);
-        console.error(`DEBUG: Using textToEncrypt() API for Lighthouse encryption`);
+        console.error(`DEBUG: Using textUploadEncrypted() API for Lighthouse encryption`);
         
-        // NEW: Use textToEncrypt() method which works in browser/node
+        // CORRECT METHOD: textUploadEncrypted() (not textToEncrypt!)
         // This encrypts text and uploads to Lighthouse in one call
-        const response = await lighthouse.textToEncrypt(
+        const response = await lighthouse.textUploadEncrypted(
             fileContent,
             apiKey,
             publicKey,
-            signedMessage,
-            filePath  // Optional filename parameter
+            signedMessage
         );
         
-        console.error(`DEBUG: textToEncrypt() response: ${JSON.stringify(response)}`);
+        console.error(`DEBUG: textUploadEncrypted() response: ${JSON.stringify(response)}`);
         
         // Check response format
         if (!response || !response.data || !response.data.Hash) {

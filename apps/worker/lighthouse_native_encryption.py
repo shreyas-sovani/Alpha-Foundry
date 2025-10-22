@@ -103,6 +103,36 @@ class LighthouseNativeEncryption:
         
         return signature_hex
     
+    def _get_signed_message(self) -> str:
+        """
+        Get authentication message from Lighthouse and sign it.
+        This is used for operations that need a signed message but not a JWT
+        (like access control).
+        
+        Returns:
+            Signed message as hex string (0x...)
+        """
+        # Get message from Lighthouse API
+        message_response = requests.get(
+            f"{self.lighthouse_encryption}/api/message/{self.wallet_address}",
+            timeout=30
+        )
+        message_response.raise_for_status()
+        message_data = message_response.json()
+        
+        # Handle different response formats
+        if isinstance(message_data, str):
+            message_to_sign = message_data
+        elif isinstance(message_data, dict):
+            message_to_sign = message_data.get("message", "")
+        elif isinstance(message_data, list) and len(message_data) > 0:
+            message_to_sign = message_data[0] if isinstance(message_data[0], str) else message_data[0].get("message", "")
+        else:
+            raise Exception(f"Unexpected message format: {type(message_data)}")
+        
+        # Sign the message
+        return self._sign_message_for_auth(message_to_sign)
+    
     def upload_encrypted(self, file_path: str, tag: str = "") -> Dict[str, Any]:
         """
         Upload file with Lighthouse native encryption.

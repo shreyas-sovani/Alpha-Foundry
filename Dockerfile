@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy Node.js package files and install GLOBALLY
 COPY apps/worker/package*.json /tmp/
-RUN cd /tmp && npm install -g @lighthouse-web3/sdk ethers && rm -rf /tmp/*
+RUN cd /tmp && npm install -g @lighthouse-web3/sdk ethers axios && rm -rf /tmp/*
 
 # Copy application code
 COPY . .

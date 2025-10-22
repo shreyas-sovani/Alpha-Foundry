@@ -288,9 +288,10 @@ uploadFile();
         Raises:
             Exception: If access control application fails
         """
-        # Create temporary Node.js script for applyAccessCondition
+        # WORKAROUND: Use HTTP API directly for access control
+        # SDK's applyAccessCondition() has issues with parameter format
         script_content = """
-const lighthouse = require('@lighthouse-web3/sdk');
+const axios = require('axios');
 
 async function applyAccessControl() {
     const publicKey = process.argv[2];
@@ -300,24 +301,39 @@ async function applyAccessControl() {
     const aggregator = process.argv[6];
     
     try {
-        const response = await lighthouse.applyAccessCondition(
-            publicKey,
-            cid,
-            signedMessage,
-            conditions,
-            aggregator
+        console.error(`DEBUG: Applying access control via HTTP API`);
+        console.error(`DEBUG: CID=${cid}, publicKey=${publicKey}`);
+        console.error(`DEBUG: Conditions: ${JSON.stringify(conditions, null, 2)}`);
+        
+        // Use HTTP API directly instead of SDK
+        const response = await axios.post(
+            'https://encryption.lighthouse.storage/api/access-condition/apply',
+            {
+                cid: cid,
+                publicKey: publicKey,
+                signedMessage: signedMessage,
+                conditions: conditions,
+                aggregator: aggregator
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            }
         );
         
-        if (!response || !response.data) {
-            throw new Error('Access control returned no data');
-        }
-        
+        console.error(`DEBUG: API response status: ${response.status}`);
         console.log(JSON.stringify(response.data));
         process.exit(0);
     } catch (error) {
         console.error(JSON.stringify({
             error: error.message || 'Unknown error',
-            stack: error.stack
+            stack: error.stack,
+            response: error.response ? {
+                status: error.response.status,
+                data: error.response.data
+            } : null
         }));
         process.exit(1);
     }

@@ -1,1 +1,1 @@
-web: /opt/venv/bin/python apps/worker/run.py
+web: python apps/worker/run.py

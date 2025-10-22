@@ -28,6 +28,7 @@ Usage:
 """
 
 import json
+import os
 import subprocess
 import tempfile
 import requests
@@ -146,12 +147,12 @@ class LighthouseNativeEncryption:
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
 const path = require('path');
+const { Wallet } = require('ethers');
 
 async function uploadWithEncryption() {
     const filePath = process.argv[2];
     const apiKey = process.argv[3];
-    const publicKey = process.argv[4];
-    const signedMessage = process.argv[5];
+    const privateKey = process.argv[4];  // Changed: now receiving private key instead of publicKey
     
     try {
         console.error(`\\n========== COMPREHENSIVE LIGHTHOUSE DEBUGGING ==========`);
@@ -212,37 +213,36 @@ async function uploadWithEncryption() {
             console.error(`  ⚠️  WARNING: Node ${process.version} < 18. Encryption may fail!`);
         }
         
-        // ===== DEBUG TIP #4: Parameter validation =====
-        console.error(`\\n[TIP #4] PARAMETER VALIDATION:`);
+        // ===== DEBUG TIP #4: Create signer from private key =====
+        console.error(`\\n[TIP #4] SIGNER CREATION:`);
         console.error(`  ✓ apiKey format: ${apiKey ? apiKey.substring(0, 10) + '...' : '❌ MISSING'}`);
         console.error(`  ✓ apiKey length: ${apiKey ? apiKey.length : 0} chars`);
-        console.error(`  ✓ publicKey (wallet): ${publicKey}`);
-        console.error(`  ✓ publicKey has 0x: ${publicKey.startsWith('0x')}`);
-        console.error(`  ✓ publicKey length: ${publicKey.length} (should be 42)`);
-        console.error(`  ✓ signedMessage format: ${signedMessage ? signedMessage.substring(0, 20) + '...' : '❌ MISSING'}`);
-        console.error(`  ✓ signedMessage length: ${signedMessage ? signedMessage.length : 0} (should be 132)`);
+        console.error(`  ✓ privateKey has 0x: ${privateKey.startsWith('0x')}`);
+        console.error(`  ✓ privateKey length: ${privateKey.length} (should be 66 with 0x)`);
         
         if (!apiKey || apiKey.length < 10) {
             throw new Error(`Invalid API key: too short or missing`);
         }
         
-        if (!publicKey.startsWith('0x') || publicKey.length !== 42) {
-            throw new Error(`Invalid publicKey format: ${publicKey} (need 0x prefix + 40 hex chars)`);
+        if (!privateKey.startsWith('0x') || privateKey.length !== 66) {
+            throw new Error(`Invalid privateKey format: length ${privateKey.length} (need 0x prefix + 64 hex chars = 66 total)`);
         }
         
-        if (!signedMessage || signedMessage.length !== 132) {
-            throw new Error(`Invalid signedMessage: length ${signedMessage ? signedMessage.length : 0} (expected 132)`);
-        }
+        // Create signer from private key
+        const signer = new Wallet(privateKey);
+        const publicKey = signer.address;
+        
+        console.error(`  ✓ Signer created successfully`);
+        console.error(`  ✓ Derived address: ${publicKey}`);
         
         // ===== DEBUG TIP #5: SDK method availability =====
         console.error(`\\n[TIP #5] SDK METHOD CHECK:`);
         console.error(`  ✓ lighthouse object: ${typeof lighthouse}`);
-        console.error(`  ✓ textUploadEncrypted: ${typeof lighthouse.textUploadEncrypted}`);
         console.error(`  ✓ uploadEncrypted: ${typeof lighthouse.uploadEncrypted}`);
         console.error(`  ✓ upload (non-encrypted): ${typeof lighthouse.upload}`);
         
-        if (typeof lighthouse.textUploadEncrypted !== 'function') {
-            throw new Error(`textUploadEncrypted not available in SDK ${version}`);
+        if (typeof lighthouse.uploadEncrypted !== 'function') {
+            throw new Error(`uploadEncrypted not available in SDK ${version}`);
         }
         
         // ===== DEBUG TIP #6: Test smaller file first (if > 100KB) =====
@@ -273,104 +273,24 @@ async function uploadWithEncryption() {
             throw new Error(`Basic upload failed: ${testError.message}`);
         }
         
-        // ===== MONKEY-PATCH KAVACH TO EXPOSE saveShards ERROR =====
-        console.error(`\\n[KAVACH PATCH] Intercepting saveShards() to expose hidden errors...`);
-        
-        const kavach = require('@lighthouse-web3/kavach');
-        const originalSaveShards = kavach.saveShards;
-        
-        kavach.saveShards = async function(...args) {
-            console.error(`\\n  → saveShards() called:`);
-            console.error(`    publicKey: ${args[0]}`);
-            console.error(`    cid: ${args[1]}`);
-            console.error(`    signedMessage: ${args[2] ? args[2].substring(0, 30) + '...' : 'MISSING'}`);
-            console.error(`    keyShards: ${JSON.stringify(args[3]).substring(0, 150)}...`);
-            
-            try {
-                const result = await originalSaveShards(...args);
-                
-                console.error(`\\n  → saveShards() returned:`);
-                console.error(`    ${JSON.stringify(result, null, 2)}`);
-                
-                if (result.error) {
-                    console.error(`\\n  ❌ ❌ ❌ REAL ERROR FROM saveShards() ❌ ❌ ❌`);
-                    console.error(`    ${JSON.stringify(result.error, null, 2)}`);
-                    
-                    // Try to extract meaningful error info
-                    if (typeof result.error === 'object') {
-                        console.error(`\\n  → Error details:`);
-                        if (result.error.message) console.error(`    message: ${result.error.message}`);
-                        if (result.error.status) console.error(`    status: ${result.error.status}`);
-                        if (result.error.statusText) console.error(`    statusText: ${result.error.statusText}`);
-                        if (result.error.data) console.error(`    data: ${JSON.stringify(result.error.data)}`);
-                    }
-                }
-                
-                return result;
-            } catch (kavachError) {
-                console.error(`\\n  ❌ saveShards() THREW EXCEPTION:`);
-                console.error(`    Type: ${kavachError.constructor.name}`);
-                console.error(`    Message: ${kavachError.message}`);
-                console.error(`    Stack: ${kavachError.stack}`);
-                throw kavachError;
-            }
-        };
-        
-        // ===== WRAP uploadEncrypted TO CATCH ORIGINAL ERROR =====
-        console.error(`\\n[SDK WRAPPER] Wrapping uploadEncrypted to catch underlying errors...`);
-        
-        const originalUploadEncrypted = lighthouse.uploadEncrypted;
-        lighthouse.uploadEncrypted = async function(...args) {
-            console.error(`\\n  → uploadEncrypted() called with:`);
-            console.error(`    filePath: ${args[0]}`);
-            console.error(`    apiKey: ${args[1] ? args[1].substring(0, 10) + '...' : 'MISSING'}`);
-            console.error(`    publicKey: ${args[2]}`);
-            console.error(`    signedMessage: ${args[3] ? args[3].substring(0, 30) + '...' : 'MISSING'}`);
-            
-            try {
-                const result = await originalUploadEncrypted(...args);
-                console.error(`\\n  ✓ uploadEncrypted() SUCCESS`);
-                return result;
-            } catch (error) {
-                console.error(`\\n  ❌ uploadEncrypted() CAUGHT ERROR:`);
-                console.error(`    Type: ${error.constructor.name}`);
-                console.error(`    Message: ${error.message}`);
-                console.error(`    Stack: ${error.stack}`);
-                
-                // Check if there's a cause or inner error
-                if (error.cause) {
-                    console.error(`\\n  → CAUSE (inner error):`);
-                    console.error(`    ${JSON.stringify(error.cause, null, 2)}`);
-                }
-                
-                // Check if it has response data
-                if (error.response) {
-                    console.error(`\\n  → HTTP RESPONSE:`);
-                    console.error(`    Status: ${error.response.status}`);
-                    console.error(`    Data: ${JSON.stringify(error.response.data)}`);
-                }
-                
-                throw error;
-            }
-        };
-        
-        // ===== NOW TRY ENCRYPTED UPLOAD (FILE-BASED, NOT TEXT) =====
-        console.error(`\\n[UPLOAD] Trying FILE-based uploadEncrypted() instead of text...`);
+        // ===== NOW TRY ENCRYPTED UPLOAD WITH SIGNER =====
+        console.error(`\\n[UPLOAD] Using uploadEncrypted() with signer object...`);
         console.error(`  → filePath: ${filePath}`);
         console.error(`  → apiKey: ${apiKey.substring(0, 10)}...`);
-        console.error(`  → publicKey: ${publicKey}`);
-        console.error(`  → signedMessage: ${signedMessage.substring(0, 20)}...`);
+        console.error(`  → signer.address: ${signer.address}`);
         
         let response;
         const startTime = Date.now();
         
         try {
-            // Use FILE-based upload instead of text
+            // CRITICAL FIX: Pass signer object, NOT publicKey + signedMessage
+            // This is the correct way to use uploadEncrypted() in SDK 0.4.3+
             response = await lighthouse.uploadEncrypted(
                 filePath,      // Pass file path directly
-                apiKey,
-                publicKey,
-                signedMessage
+                apiKey,        // API key
+                signer         // Wallet signer object (creates encryption keys internally)
+            );
+                signer         // Wallet signer object (creates encryption keys internally)
             );
             const elapsed = Date.now() - startTime;
             console.error(`\\n[SUCCESS] uploadEncrypted() completed in ${elapsed}ms ✓`);
@@ -460,14 +380,23 @@ uploadWithEncryption();
         
         try:
             # CRITICAL: Get signed message BEFORE uploading
-            # This authenticates with Lighthouse and enables uploadEncrypted()
-            print(f"[Lighthouse] Getting signed auth message for uploadEncrypted()...")
-            signed_message = self._get_signed_message()
+            # CRITICAL FIX: Pass private key directly to Node.js script
+            # The script will create a Wallet signer object from it
+            # This is the correct way to use uploadEncrypted() in SDK 0.4.3+
+            print(f"[Lighthouse] Using private key to create signer for uploadEncrypted()...")
+            
+            # Get private key from environment (already has 0x prefix)
+            private_key = os.environ.get("LIGHTHOUSE_WALLET_PRIVATE_KEY")
+            if not private_key:
+                raise Exception("LIGHTHOUSE_WALLET_PRIVATE_KEY environment variable not set")
+            
+            if not private_key.startswith("0x"):
+                raise Exception("Private key must start with 0x prefix")
             
             # Convert to absolute path - Lighthouse SDK requires absolute paths
             abs_file_path = str(Path(file_path).resolve())
             
-            # Run Node.js script with uploadEncrypted() and authentication
+            # Run Node.js script with uploadEncrypted() and signer
             print(f"[Lighthouse] Uploading {abs_file_path} with native encryption...")
             result = subprocess.run(
                 [
@@ -475,8 +404,7 @@ uploadWithEncryption();
                     script_path,
                     abs_file_path,
                     self.api_key,
-                    self.wallet_address,
-                    signed_message
+                    private_key  # Pass private key, not publicKey + signedMessage
                 ],
                 capture_output=True,
                 text=True,

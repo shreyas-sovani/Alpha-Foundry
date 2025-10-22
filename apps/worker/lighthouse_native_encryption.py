@@ -147,13 +147,13 @@ class LighthouseNativeEncryption:
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
 const path = require('path');
-const ethers = require('ethers');
 const { getJWT } = require('@lighthouse-web3/kavach');
 
 async function uploadWithEncryption() {
     const filePath = process.argv[2];
     const apiKey = process.argv[3];
-    const privateKey = process.argv[4];  // Private key for signing
+    const publicKey = process.argv[4];      // Wallet address
+    const signedMessage = process.argv[5];  // Python-generated signed message
     
     try {
         console.error(`\\n========== COMPREHENSIVE LIGHTHOUSE DEBUGGING ==========`);
@@ -214,36 +214,29 @@ async function uploadWithEncryption() {
             console.error(`  ⚠️  WARNING: Node ${process.version} < 18. Encryption may fail!`);
         }
         
-        // ===== DEBUG TIP #4: Create signer from private key =====
-        console.error(`\\n[TIP #4] SIGNER CREATION:`);
+        // ===== DEBUG TIP #4: Use Python-generated signature =====
+        console.error(`\\n[TIP #4] AUTHENTICATION:`);
         console.error(`  ✓ apiKey format: ${apiKey ? apiKey.substring(0, 10) + '...' : '❌ MISSING'}`);
         console.error(`  ✓ apiKey length: ${apiKey ? apiKey.length : 0} chars`);
-        console.error(`  ✓ privateKey has 0x: ${privateKey.startsWith('0x')}`);
-        console.error(`  ✓ privateKey length: ${privateKey.length} (should be 66 with 0x)`);
+        console.error(`  ✓ publicKey: ${publicKey}`);
+        console.error(`  ✓ publicKey has 0x: ${publicKey.startsWith('0x')}`);
+        console.error(`  ✓ publicKey length: ${publicKey.length} (should be 42)`);
+        console.error(`  ✓ signedMessage: ${signedMessage.substring(0, 20)}...`);
+        console.error(`  ✓ signedMessage length: ${signedMessage.length} (should be 132)`);
         
         if (!apiKey || apiKey.length < 10) {
             throw new Error(`Invalid API key: too short or missing`);
         }
         
-        if (!privateKey.startsWith('0x') || privateKey.length !== 66) {
-            throw new Error(`Invalid privateKey format: length ${privateKey.length} (need 0x prefix + 64 hex chars = 66 total)`);
+        if (!publicKey.startsWith('0x') || publicKey.length !== 42) {
+            throw new Error(`Invalid publicKey format: ${publicKey} (need 0x prefix + 40 hex chars)`);
         }
         
-        // Create wallet signer (no provider needed for signing)
-        const wallet = new ethers.Wallet(privateKey);
-        const publicKey = wallet.address;
+        if (!signedMessage || signedMessage.length !== 132) {
+            throw new Error(`Invalid signedMessage: length ${signedMessage.length} (expected 132)`);
+        }
         
-        console.error(`  ✓ Signer created successfully`);
-        console.error(`  ✓ Derived address: ${publicKey}`);
-        
-        // Get signed message for authentication
-        const authUrl = 'https://api.lighthouse.storage/api/auth/get_message?publicKey=' + publicKey;
-        const messageText = await fetch(authUrl)
-            .then(r => r.json())
-            .then(data => data.message || data);
-        
-        const signedMessage = await wallet.signMessage(messageText);
-        console.error(`  ✓ Signed message: ${signedMessage.substring(0, 20)}...`);
+        console.error(`  ✓ Using Python eth-account generated signature`);
         
         // Get JWT token for kavach authentication
         console.error(`\\n  → Calling getJWT(publicKey, signedMessage)...`);
@@ -402,23 +395,15 @@ uploadWithEncryption();
         
         try:
             # CRITICAL: Get signed message BEFORE uploading
-            # CRITICAL FIX: Pass private key directly to Node.js script
-            # The script will create a Wallet signer object from it
-            # This is the correct way to use uploadEncrypted() in SDK 0.4.3+
-            print(f"[Lighthouse] Using private key to create signer for uploadEncrypted()...")
-            
-            # Get private key from environment (already has 0x prefix)
-            private_key = os.environ.get("LIGHTHOUSE_WALLET_PRIVATE_KEY")
-            if not private_key:
-                raise Exception("LIGHTHOUSE_WALLET_PRIVATE_KEY environment variable not set")
-            
-            if not private_key.startswith("0x"):
-                raise Exception("Private key must start with 0x prefix")
+            # CRITICAL FIX: Use Python eth-account for signing (known to work)
+            # Then pass signed message to JavaScript for JWT generation
+            print(f"[Lighthouse] Getting signed message from Python eth-account...")
+            signed_message = self._get_signed_message()
             
             # Convert to absolute path - Lighthouse SDK requires absolute paths
             abs_file_path = str(Path(file_path).resolve())
             
-            # Run Node.js script with uploadEncrypted() and signer
+            # Run Node.js script with signed message for JWT generation
             print(f"[Lighthouse] Uploading {abs_file_path} with native encryption...")
             result = subprocess.run(
                 [
@@ -426,7 +411,8 @@ uploadWithEncryption();
                     script_path,
                     abs_file_path,
                     self.api_key,
-                    private_key  # Pass private key, not publicKey + signedMessage
+                    self.wallet_address,   # Public key
+                    signed_message         # Python-generated signed message
                 ],
                 capture_output=True,
                 text=True,

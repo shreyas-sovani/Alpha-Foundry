@@ -154,40 +154,103 @@ async function uploadWithEncryption() {
     const signedMessage = process.argv[5];
     
     try {
-        // Read file content
+        // STEP 1: Validate inputs
+        console.error(`DEBUG 1: Starting upload process`);
+        console.error(`DEBUG 1.1: filePath = ${filePath}`);
+        console.error(`DEBUG 1.2: apiKey = ${apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'}`);
+        console.error(`DEBUG 1.3: publicKey = ${publicKey}`);
+        console.error(`DEBUG 1.4: signedMessage = ${signedMessage ? signedMessage.substring(0, 20) + '...' : 'MISSING'}`);
+        
+        // STEP 2: Check file exists
+        console.error(`DEBUG 2: Checking file existence`);
         if (!fs.existsSync(filePath)) {
             throw new Error(`File does not exist: ${filePath}`);
         }
+        console.error(`DEBUG 2.1: File exists ✓`);
         
+        // STEP 3: Read file content
+        console.error(`DEBUG 3: Reading file content`);
         const fileContent = fs.readFileSync(filePath, 'utf8');
         const stats = fs.statSync(filePath);
-        console.error(`DEBUG: File size: ${stats.size} bytes`);
-        console.error(`DEBUG: Using textUploadEncrypted() API for Lighthouse encryption`);
+        console.error(`DEBUG 3.1: File size: ${stats.size} bytes`);
+        console.error(`DEBUG 3.2: Content length: ${fileContent.length} characters`);
+        console.error(`DEBUG 3.3: First 100 chars: ${fileContent.substring(0, 100)}`);
         
-        // CORRECT METHOD: textUploadEncrypted() (not textToEncrypt!)
-        // This encrypts text and uploads to Lighthouse in one call
-        const response = await lighthouse.textUploadEncrypted(
-            fileContent,
-            apiKey,
-            publicKey,
-            signedMessage
-        );
+        // STEP 4: Validate SDK method exists
+        console.error(`DEBUG 4: Checking SDK method availability`);
+        console.error(`DEBUG 4.1: lighthouse object type: ${typeof lighthouse}`);
+        console.error(`DEBUG 4.2: textUploadEncrypted exists: ${typeof lighthouse.textUploadEncrypted}`);
         
-        console.error(`DEBUG: textUploadEncrypted() response: ${JSON.stringify(response)}`);
+        if (typeof lighthouse.textUploadEncrypted !== 'function') {
+            throw new Error(`textUploadEncrypted is not a function (type: ${typeof lighthouse.textUploadEncrypted})`);
+        }
+        console.error(`DEBUG 4.3: textUploadEncrypted is a function ✓`);
         
-        // Check response format
-        if (!response || !response.data || !response.data.Hash) {
-            throw new Error(`Upload returned invalid response: ${JSON.stringify(response)}`);
+        // STEP 5: Call textUploadEncrypted with detailed error catching
+        console.error(`DEBUG 5: Calling textUploadEncrypted()`);
+        console.error(`DEBUG 5.1: Parameter 1 (text): ${fileContent.length} chars`);
+        console.error(`DEBUG 5.2: Parameter 2 (apiKey): ${apiKey.substring(0, 10)}...`);
+        console.error(`DEBUG 5.3: Parameter 3 (publicKey): ${publicKey}`);
+        console.error(`DEBUG 5.4: Parameter 4 (signedMessage): ${signedMessage.substring(0, 20)}...`);
+        
+        let response;
+        try {
+            response = await lighthouse.textUploadEncrypted(
+                fileContent,
+                apiKey,
+                publicKey,
+                signedMessage
+            );
+            console.error(`DEBUG 5.5: textUploadEncrypted() returned ✓`);
+        } catch (sdkError) {
+            console.error(`DEBUG 5.6: textUploadEncrypted() threw error!`);
+            console.error(`DEBUG 5.7: Error type: ${sdkError.constructor.name}`);
+            console.error(`DEBUG 5.8: Error message: ${sdkError.message}`);
+            console.error(`DEBUG 5.9: Error stack: ${sdkError.stack}`);
+            if (sdkError.response) {
+                console.error(`DEBUG 5.10: Error response: ${JSON.stringify(sdkError.response)}`);
+            }
+            if (sdkError.code) {
+                console.error(`DEBUG 5.11: Error code: ${sdkError.code}`);
+            }
+            throw sdkError; // Re-throw to be caught by outer catch
         }
         
-        // Return CID and metadata
+        // STEP 6: Validate response
+        console.error(`DEBUG 6: Validating response`);
+        console.error(`DEBUG 6.1: Response type: ${typeof response}`);
+        console.error(`DEBUG 6.2: Response: ${JSON.stringify(response)}`);
+        
+        if (!response) {
+            throw new Error(`Response is null or undefined`);
+        }
+        console.error(`DEBUG 6.3: Response exists ✓`);
+        
+        if (!response.data) {
+            throw new Error(`Response.data is missing: ${JSON.stringify(response)}`);
+        }
+        console.error(`DEBUG 6.4: Response.data exists ✓`);
+        
+        if (!response.data.Hash) {
+            throw new Error(`Response.data.Hash is missing: ${JSON.stringify(response.data)}`);
+        }
+        console.error(`DEBUG 6.5: Response.data.Hash exists: ${response.data.Hash} ✓`);
+        
+        // STEP 7: Return success
+        console.error(`DEBUG 7: Success! Returning CID`);
         console.log(JSON.stringify({
             cid: response.data.Hash,
             name: response.data.Name || filePath.split('/').pop(),
             size: response.data.Size || stats.size.toString()
         }));
         process.exit(0);
+        
     } catch (error) {
+        console.error(`DEBUG ERROR: Caught exception in main try-catch`);
+        console.error(`DEBUG ERROR 1: Error type: ${error.constructor.name}`);
+        console.error(`DEBUG ERROR 2: Error message: ${error.message}`);
+        console.error(`DEBUG ERROR 3: Error stack: ${error.stack}`);
+        
         console.error(JSON.stringify({
             error: error.message || 'Unknown error',
             stack: error.stack,

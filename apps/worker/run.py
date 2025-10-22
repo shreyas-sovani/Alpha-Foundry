@@ -627,8 +627,11 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
     now_utc = datetime.utcnow()
     last_updated_iso = now_utc.isoformat() + "Z"
     
-    # Compute freshness: read existing metadata if available
+    # Compute freshness and preserve existing lighthouse fields
     freshness_minutes = 0
+    existing_cid = None
+    existing_lighthouse_fields = {}
+    
     if metadata_path.exists():
         try:
             with open(metadata_path, "r") as f:
@@ -640,18 +643,32 @@ def update_metadata(metadata_path: Path, row_count: int, schema_version: str = "
                     prev_dt_naive = prev_dt.replace(tzinfo=None)
                     delta = now_utc - prev_dt_naive
                     freshness_minutes = int(delta.total_seconds() / 60)
+                
+                # Preserve Lighthouse fields from previous update
+                existing_cid = existing.get("latest_cid")
+                if existing.get("lighthouse_gateway"):
+                    existing_lighthouse_fields["lighthouse_gateway"] = existing["lighthouse_gateway"]
+                if existing.get("lighthouse_updated"):
+                    existing_lighthouse_fields["lighthouse_updated"] = existing["lighthouse_updated"]
+                if existing.get("encryption"):
+                    existing_lighthouse_fields["encryption"] = existing["encryption"]
+                if existing.get("last_lighthouse_upload"):
+                    existing_lighthouse_fields["last_lighthouse_upload"] = existing["last_lighthouse_upload"]
         except Exception as e:
-            logger.debug(f"Could not compute freshness: {e}")
+            logger.debug(f"Could not read existing metadata: {e}")
     
     metadata = {
         "schema_version": schema_version,
         "last_updated": last_updated_iso,
         "rows": row_count,
         "freshness_minutes": freshness_minutes,
-        "latest_cid": None,
+        "latest_cid": existing_cid,  # Preserve existing CID instead of resetting to None
         "format": "jsonl",
         "fields": fields
     }
+    
+    # Add back preserved Lighthouse fields
+    metadata.update(existing_lighthouse_fields)
     
     # Atomic write with temp file + rename + fsync
     temp_path = metadata_path.with_suffix(".json.tmp")

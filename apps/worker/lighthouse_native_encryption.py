@@ -254,6 +254,34 @@ async function uploadWithEncryption() {
             console.error(`  ✓ File size OK: ${(stats.size/1024).toFixed(2)} KB (< 100KB)`);
         }
         
+        // ===== PATCH SDK TO EXPOSE saveShards ERROR =====
+        // The SDK throws generic "Error encrypting file" and hides the real error
+        // We need to intercept saveShards() to see the actual error
+        console.error(`\\n[SDK PATCH] Intercepting saveShards() to expose errors...`);
+        
+        const { saveShards: originalSaveShards } = require('@lighthouse-web3/kavach');
+        const kavach = require('@lighthouse-web3/kavach');
+        
+        kavach.saveShards = async function(...args) {
+            console.error(`  → saveShards() called with:`);
+            console.error(`    publicKey: ${args[0]}`);
+            console.error(`    cid: ${args[1]}`);
+            console.error(`    signedMessage: ${args[2].substring(0, 20)}...`);
+            console.error(`    keyShards: ${JSON.stringify(args[3]).substring(0, 100)}...`);
+            
+            const result = await originalSaveShards(...args);
+            
+            console.error(`  → saveShards() result:`);
+            console.error(`    ${JSON.stringify(result)}`);
+            
+            if (result.error) {
+                console.error(`  ❌ saveShards() ERROR DETAILS:`);
+                console.error(`    ${JSON.stringify(result.error, null, 2)}`);
+            }
+            
+            return result;
+        };
+        
         // ===== MAIN UPLOAD ATTEMPT =====
         console.error(`\\n[UPLOAD] Calling textUploadEncrypted()...`);
         console.error(`  → text: ${fileContent.length} chars`);

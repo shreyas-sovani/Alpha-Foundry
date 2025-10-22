@@ -290,8 +290,6 @@ async function uploadWithEncryption() {
                 apiKey,        // API key
                 signer         // Wallet signer object (creates encryption keys internally)
             );
-                signer         // Wallet signer object (creates encryption keys internally)
-            );
             const elapsed = Date.now() - startTime;
             console.error(`\\n[SUCCESS] uploadEncrypted() completed in ${elapsed}ms ✓`);
         } catch (sdkError) {

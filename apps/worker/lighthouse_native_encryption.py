@@ -316,6 +316,44 @@ async function uploadWithEncryption() {
             }
         };
         
+        // ===== WRAP uploadEncrypted TO CATCH ORIGINAL ERROR =====
+        console.error(`\\n[SDK WRAPPER] Wrapping uploadEncrypted to catch underlying errors...`);
+        
+        const originalUploadEncrypted = lighthouse.uploadEncrypted;
+        lighthouse.uploadEncrypted = async function(...args) {
+            console.error(`\\n  → uploadEncrypted() called with:`);
+            console.error(`    filePath: ${args[0]}`);
+            console.error(`    apiKey: ${args[1] ? args[1].substring(0, 10) + '...' : 'MISSING'}`);
+            console.error(`    publicKey: ${args[2]}`);
+            console.error(`    signedMessage: ${args[3] ? args[3].substring(0, 30) + '...' : 'MISSING'}`);
+            
+            try {
+                const result = await originalUploadEncrypted(...args);
+                console.error(`\\n  ✓ uploadEncrypted() SUCCESS`);
+                return result;
+            } catch (error) {
+                console.error(`\\n  ❌ uploadEncrypted() CAUGHT ERROR:`);
+                console.error(`    Type: ${error.constructor.name}`);
+                console.error(`    Message: ${error.message}`);
+                console.error(`    Stack: ${error.stack}`);
+                
+                // Check if there's a cause or inner error
+                if (error.cause) {
+                    console.error(`\\n  → CAUSE (inner error):`);
+                    console.error(`    ${JSON.stringify(error.cause, null, 2)}`);
+                }
+                
+                // Check if it has response data
+                if (error.response) {
+                    console.error(`\\n  → HTTP RESPONSE:`);
+                    console.error(`    Status: ${error.response.status}`);
+                    console.error(`    Data: ${JSON.stringify(error.response.data)}`);
+                }
+                
+                throw error;
+            }
+        };
+        
         // ===== NOW TRY ENCRYPTED UPLOAD (FILE-BASED, NOT TEXT) =====
         console.error(`\\n[UPLOAD] Trying FILE-based uploadEncrypted() instead of text...`);
         console.error(`  → filePath: ${filePath}`);
@@ -335,10 +373,10 @@ async function uploadWithEncryption() {
                 signedMessage
             );
             const elapsed = Date.now() - startTime;
-            console.error(`\\n[SUCCESS] textUploadEncrypted() completed in ${elapsed}ms ✓`);
+            console.error(`\\n[SUCCESS] uploadEncrypted() completed in ${elapsed}ms ✓`);
         } catch (sdkError) {
             const elapsed = Date.now() - startTime;
-            console.error(`\\n[ERROR] textUploadEncrypted() failed after ${elapsed}ms`);
+            console.error(`\\n[ERROR] uploadEncrypted() failed after ${elapsed}ms`);
             console.error(`  ❌ Error type: ${sdkError.constructor.name}`);
             console.error(`  ❌ Error message: ${sdkError.message}`);
             console.error(`  ❌ Error stack:\\n${sdkError.stack}`);

@@ -79,35 +79,17 @@ class LighthouseNativeEncryption:
         self.lighthouse_node = "https://upload.lighthouse.storage"
         self.lighthouse_encryption = "https://encryption.lighthouse.storage"
     
-    def _get_signed_message(self) -> str:
+    def _sign_message_for_auth(self, message_text: str) -> str:
         """
-        Get authentication message from Lighthouse and sign it.
+        Sign a message with the wallet's private key using EIP-191.
         
-        This implements the Lighthouse auth flow:
-        1. Request message from API with wallet address
-        2. Sign message with private key
-        3. Return signed message for API authentication
+        Args:
+            message_text: The message to sign (from Lighthouse API)
         
         Returns:
-            Signed message as hex string (0x...)
-        
-        Raises:
-            requests.HTTPError: If API request fails
-            Exception: If signing fails
+            Signed message as hex string with 0x prefix
         """
-        # Step 1: Get message to sign from Lighthouse
-        response = requests.get(
-            f"{self.lighthouse_api}/api/auth/get_message",
-            params={"publicKey": self.wallet_address},
-            timeout=30
-        )
-        response.raise_for_status()
-        response_data = response.json()
-        
-        # Extract message from response - API returns {"message": "..."}
-        message_text = response_data.get("message") if isinstance(response_data, dict) else response_data
-        
-        # Step 2: Sign message with private key
+        # Use EIP-191 personal message signing
         message_hash = encode_defunct(text=message_text)
         signed = self.account.sign_message(message_hash)
         
@@ -115,6 +97,10 @@ class LighthouseNativeEncryption:
         signature_hex = signed.signature.hex()
         if not signature_hex.startswith("0x"):
             signature_hex = "0x" + signature_hex
+        
+        print(f"[Python] Signed message: '{message_text[:50]}...'")
+        print(f"[Python] Signature: {signature_hex[:20]}...")
+        
         return signature_hex
     
     def upload_encrypted(self, file_path: str, tag: str = "") -> Dict[str, Any]:
@@ -147,13 +133,12 @@ class LighthouseNativeEncryption:
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
 const path = require('path');
-const { getJWT } = require('@lighthouse-web3/kavach');
 
 async function uploadWithEncryption() {
     const filePath = process.argv[2];
     const apiKey = process.argv[3];
     const publicKey = process.argv[4];      // Wallet address
-    const signedMessage = process.argv[5];  // Python-generated signed message
+    const jwtToken = process.argv[5];       // JWT token from Python REST API
     
     try {
         console.error(`\\n========== COMPREHENSIVE LIGHTHOUSE DEBUGGING ==========`);
@@ -232,24 +217,11 @@ async function uploadWithEncryption() {
             throw new Error(`Invalid publicKey format: ${publicKey} (need 0x prefix + 40 hex chars)`);
         }
         
-        if (!signedMessage || signedMessage.length !== 132) {
-            throw new Error(`Invalid signedMessage: length ${signedMessage.length} (expected 132)`);
-        }
+        // JWT token was obtained by Python via REST API
+        const JWT = jwtToken;
         
-        console.error(`  ✓ Using Python eth-account generated signature`);
-        
-        // Get JWT token for kavach authentication
-        console.error(`\\n  → Calling getJWT(publicKey, signedMessage)...`);
-        const jwtResult = await getJWT(publicKey, signedMessage);
-        console.error(`  → getJWT() returned: ${JSON.stringify(jwtResult)}`);
-        
-        const JWT = jwtResult?.JWT || jwtResult?.data?.JWT;
-        console.error(`  ✓ JWT token obtained: ${JWT ? JWT.substring(0, 20) + '...' : 'MISSING'}`);
-        
-        if (!JWT) {
-            console.error(`  ❌ JWT is missing! Full getJWT result: ${JSON.stringify(jwtResult, null, 2)}`);
-            throw new Error('Failed to get JWT token from kavach');
-        }
+        console.error(`  ✓ Using JWT token from Python (obtained via REST API)`);
+        console.error(`  ✓ JWT token: ${JWT.substring(0, 30)}...`);
         
         // ===== DEBUG TIP #5: SDK method availability =====
         console.error(`\\n[TIP #5] SDK METHOD CHECK:`);
@@ -398,13 +370,47 @@ uploadWithEncryption();
             # CRITICAL FIX: Use Python eth-account for signing (known to work)
             # Then pass signed message to JavaScript for JWT generation
             print(f"[Lighthouse] Getting signed message from Python eth-account...")
-            signed_message = self._get_signed_message()
+            # STEP 1: Get message to sign from Lighthouse API
+            print(f"[Lighthouse] Step 1: Getting auth message from Lighthouse...")
+            message_response = requests.get(
+                f"{self.lighthouse_encryption}/api/message/{self.wallet_address}",
+                timeout=30
+            )
+            message_response.raise_for_status()
+            message_data = message_response.json()
+            message_to_sign = message_data if isinstance(message_data, str) else message_data.get("message", "")
+            
+            print(f"[Lighthouse] Message to sign: {message_to_sign[:50]}...")
+            
+            # STEP 2: Sign message with Python eth-account
+            print(f"[Lighthouse] Step 2: Signing message with eth-account...")
+            signed_message = self._sign_message_for_auth(message_to_sign)
+            
+            # STEP 3: Get JWT token from Lighthouse
+            print(f"[Lighthouse] Step 3: Getting JWT token via REST API...")
+            jwt_response = requests.post(
+                f"{self.lighthouse_encryption}/api/message/get-jwt",
+                json={
+                    "address": self.wallet_address,
+                    "signature": signed_message
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            jwt_response.raise_for_status()
+            jwt_data = jwt_response.json()
+            jwt_token = jwt_data.get("token")
+            
+            if not jwt_token:
+                raise Exception(f"Failed to get JWT token: {jwt_data}")
+            
+            print(f"[Lighthouse] ✓ JWT token obtained: {jwt_token[:20]}...")
             
             # Convert to absolute path - Lighthouse SDK requires absolute paths
             abs_file_path = str(Path(file_path).resolve())
             
-            # Run Node.js script with signed message for JWT generation
-            print(f"[Lighthouse] Uploading {abs_file_path} with native encryption...")
+            # STEP 4: Run Node.js script with JWT token
+            print(f"[Lighthouse] Step 4: Uploading {abs_file_path} with JWT...")
             result = subprocess.run(
                 [
                     'node',
@@ -412,7 +418,7 @@ uploadWithEncryption();
                     abs_file_path,
                     self.api_key,
                     self.wallet_address,   # Public key
-                    signed_message         # Python-generated signed message
+                    jwt_token              # JWT token for authentication
                 ],
                 capture_output=True,
                 text=True,

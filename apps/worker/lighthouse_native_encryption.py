@@ -206,8 +206,8 @@ async function uploadWithEncryption() {
         console.error(`  ✓ publicKey: ${publicKey}`);
         console.error(`  ✓ publicKey has 0x: ${publicKey.startsWith('0x')}`);
         console.error(`  ✓ publicKey length: ${publicKey.length} (should be 42)`);
-        console.error(`  ✓ signedMessage: ${signedMessage.substring(0, 20)}...`);
-        console.error(`  ✓ signedMessage length: ${signedMessage.length} (should be 132)`);
+        console.error(`  ✓ jwtToken: ${jwtToken.substring(0, 30)}...`);
+        console.error(`  ✓ jwtToken length: ${jwtToken.length}`);
         
         if (!apiKey || apiKey.length < 10) {
             throw new Error(`Invalid API key: too short or missing`);
@@ -221,7 +221,6 @@ async function uploadWithEncryption() {
         const JWT = jwtToken;
         
         console.error(`  ✓ Using JWT token from Python (obtained via REST API)`);
-        console.error(`  ✓ JWT token: ${JWT.substring(0, 30)}...`);
         
         // ===== DEBUG TIP #5: SDK method availability =====
         console.error(`\\n[TIP #5] SDK METHOD CHECK:`);

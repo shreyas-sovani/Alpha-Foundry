@@ -1,0 +1,49 @@
+# Prevent copying local node_modules
+# Docker will create its own during build
+apps/worker/node_modules
+
+# Python cache
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.Python
+**/.pytest_cache
+
+# Environment files (use Railway env vars instead)
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+worker.log
+
+# Frontend (not needed in backend Docker image)
+frontend/node_modules
+frontend/.next
+frontend/out
+
+# Documentation
+*.md
+!README.md
+
+# State files (will be created at runtime)
+state/*.json
+apps/worker/state/*.json
+apps/worker/out/*

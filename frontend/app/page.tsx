@@ -96,6 +96,11 @@ export default function UnlockPage() {
   const [showFAQ, setShowFAQ] = useState(false)
   const [showAgentChat, setShowAgentChat] = useState(false)
   
+  // Agent chat state
+  const [chatMessages, setChatMessages] = useState<Array<{role: 'user' | 'agent', text: string}>>([])
+  const [chatInput, setChatInput] = useState('')
+  const [isSendingMessage, setIsSendingMessage] = useState(false)
+  
   // Fetch metadata from backend
   const { data: metadata, error: metadataError, mutate: refetchMetadata } = useSWR<Metadata>(
     `${METADATA_API}/metadata`,
@@ -422,6 +427,62 @@ export default function UnlockPage() {
     
     setSuccess('✅ Downloaded decrypted data!')
   }
+  
+  // Agent chat: Send message and get AI response
+  const sendChatMessage = async () => {
+    if (!chatInput.trim() || isSendingMessage) return
+    
+    const userMessage = chatInput.trim()
+    setChatInput('')
+    
+    // Add user message
+    setChatMessages(prev => [...prev, { role: 'user', text: userMessage }])
+    setIsSendingMessage(true)
+    
+    try {
+      // Simple AI-like responses based on metadata/preview data
+      let response = ''
+      
+      const lowerQuery = userMessage.toLowerCase()
+      
+      if (lowerQuery.includes('how many') || lowerQuery.includes('total') || lowerQuery.includes('rows')) {
+        response = `Currently tracking **${metadata?.rows || 0} DEX arbitrage opportunities**. The data is updated every 5 minutes from Ethereum mainnet.`
+      } else if (lowerQuery.includes('latest') || lowerQuery.includes('recent') || lowerQuery.includes('new')) {
+        response = `Latest data update: **${metadata?.last_updated ? new Date(metadata.last_updated).toLocaleString() : 'N/A'}**. The dataset contains ${metadata?.rows || 0} rows and is ${metadata?.freshness_minutes === 0 ? 'fresh (just updated!)' : `${metadata?.freshness_minutes} minutes old`}.`
+      } else if (lowerQuery.includes('encrypted') || lowerQuery.includes('decrypt') || lowerQuery.includes('unlock')) {
+        response = `The data is encrypted using **Lighthouse native encryption** with ERC20 token-gating. You need at least **${MIN_BALANCE} DADC tokens** to decrypt. Connect your wallet and claim tokens from the faucet above!`
+      } else if (lowerQuery.includes('cid') || lowerQuery.includes('ipfs')) {
+        response = metadata?.latest_cid 
+          ? `Latest encrypted file CID: **${metadata.latest_cid}**\n\nView on Lighthouse: https://files.lighthouse.storage/viewFile/${metadata.latest_cid}`
+          : 'No encrypted file available yet. The backend is still processing data.'
+      } else if (lowerQuery.includes('help') || lowerQuery.includes('what can')) {
+        response = `I can help you with:\n\n• **Data statistics**: "How many rows?", "When was it updated?"\n• **Encryption info**: "How do I decrypt the data?"\n• **Latest updates**: "What's new?"\n• **IPFS/CID info**: "Show me the CID"\n\nThe data contains real-time DEX arbitrage opportunities from Ethereum mainnet, encrypted and token-gated for your security.`
+      } else {
+        response = `I understand you're asking about: "${userMessage}"\n\nHere's what I know:\n• **Total opportunities**: ${metadata?.rows || 0}\n• **Last updated**: ${metadata?.last_updated ? new Date(metadata.last_updated).toLocaleString() : 'N/A'}\n• **Encryption**: Active (requires ${MIN_BALANCE} DADC)\n• **Data freshness**: ${metadata?.freshness_minutes === 0 ? 'Just updated!' : `${metadata?.freshness_minutes} min old`}\n\nTry asking: "How many rows?", "Show latest", or "How to decrypt?"`
+      }
+      
+      // Add agent response
+      setChatMessages(prev => [...prev, { role: 'agent', text: response }])
+      
+    } catch (err) {
+      setChatMessages(prev => [...prev, { 
+        role: 'agent', 
+        text: '❌ Sorry, I encountered an error. Please try again.' 
+      }])
+    } finally {
+      setIsSendingMessage(false)
+    }
+  }
+  
+  // Initialize chat with welcome message
+  useEffect(() => {
+    if (showAgentChat && chatMessages.length === 0) {
+      setChatMessages([{
+        role: 'agent',
+        text: `👋 Hi! I'm your DEXArb AI assistant. I can help you explore the encrypted arbitrage data.\n\nCurrently tracking **${metadata?.rows || 0} opportunities** (updated ${metadata?.last_updated ? new Date(metadata.last_updated).toLocaleTimeString() : 'recently'}).\n\nAsk me about data stats, encryption, or the latest updates!`
+      }])
+    }
+  }, [showAgentChat, metadata])
   
   // Render
   return (
@@ -793,13 +854,13 @@ export default function UnlockPage() {
       </div>
       
       {/* Agentverse Chat Widget - Floating Button */}
-      {AGENT_ADDRESS && (
+      {metadata && (
         <>
           {/* Chat Toggle Button */}
           <button
             onClick={() => setShowAgentChat(!showAgentChat)}
             className="fixed bottom-6 right-6 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-full p-4 shadow-lg transition-all duration-300 hover:scale-110 z-50"
-            title="Chat with AI Agent"
+            title="Chat with AI Assistant"
           >
             {showAgentChat ? (
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -823,8 +884,8 @@ export default function UnlockPage() {
                       🤖
                     </div>
                     <div>
-                      <h3 className="font-bold text-white">DEXArb AI Agent</h3>
-                      <p className="text-xs text-gray-200">Powered by Agentverse</p>
+                      <h3 className="font-bold text-white">DEXArb AI Assistant</h3>
+                      <p className="text-xs text-gray-200">Real-time Data Insights</p>
                     </div>
                   </div>
                   <button
@@ -838,19 +899,60 @@ export default function UnlockPage() {
                 </div>
               </div>
               
-              {/* Chat Iframe */}
-              <div className="flex-1 overflow-hidden">
-                <iframe
-                  src={`https://agentverse.ai/chat/${AGENT_ADDRESS}`}
-                  className="w-full h-full border-0"
-                  title="Agentverse Chat"
-                  allow="clipboard-write"
-                />
+              {/* Chat Messages */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {chatMessages.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[80%] rounded-lg p-3 ${
+                        msg.role === 'user'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-800 text-gray-100'
+                      }`}
+                    >
+                      <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                    </div>
+                  </div>
+                ))}
+                {isSendingMessage && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-800 rounded-lg p-3">
+                      <div className="flex gap-1">
+                        <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
+                        <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+                        <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
               
-              {/* Chat Footer */}
-              <div className="bg-gray-800 p-2 rounded-b-lg text-xs text-gray-400 text-center">
-                Ask about arbitrage opportunities, data stats, or explore transactions
+              {/* Chat Input */}
+              <div className="border-t border-gray-700 p-4">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
+                    placeholder="Ask about data, stats, encryption..."
+                    className="flex-1 bg-gray-800 text-white rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={isSendingMessage}
+                  />
+                  <button
+                    onClick={sendChatMessage}
+                    disabled={!chatInput.trim() || isSendingMessage}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                  >
+                    Send
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Try: "How many rows?", "Show latest", "Help"
+                </p>
               </div>
             </div>
           )}

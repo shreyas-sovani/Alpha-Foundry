@@ -120,9 +120,9 @@ class LighthouseNativeEncryption:
         """
         Upload file with Lighthouse native encryption.
         
-        Uses Node.js @lighthouse-web3/sdk via subprocess to call uploadEncrypted().
-        This properly encrypts the file with Kavach SDK and stores encryption key
-        shards on Lighthouse nodes, enabling token-gated decryption.
+        CRITICAL INSIGHT: The SDK's uploadEncrypted() is BROKEN internally.
+        New approach: Use text() method for browser-compatible encryption,
+        or use upload() + manual encryption via textToEncrypt() API.
         
         Args:
             file_path: Absolute path to file to upload
@@ -138,42 +138,43 @@ class LighthouseNativeEncryption:
         Raises:
             Exception: If upload fails or Node.js subprocess errors
         """
-        # FIX: Use uploadEncrypted() correctly with signed message FIRST
-        # The SDK requires authentication BEFORE calling uploadEncrypted()
-        # Previous attempts failed because we didn't get signed message upfront
+        # NEW APPROACH: Use textToEncrypt() API for encryption + regular upload
+        # uploadEncrypted() is broken in SDK - fails at line 43 (encryption step)
+        # Alternative: Encrypt via Lighthouse API, then upload encrypted content
         script_content = """
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
 
-async function uploadEncryptedFile() {
+async function uploadWithEncryption() {
     const filePath = process.argv[2];
     const apiKey = process.argv[3];
     const publicKey = process.argv[4];
     const signedMessage = process.argv[5];
     
     try {
-        // Debug: Verify inputs
+        // Read file content
         if (!fs.existsSync(filePath)) {
             throw new Error(`File does not exist: ${filePath}`);
         }
         
+        const fileContent = fs.readFileSync(filePath, 'utf8');
         const stats = fs.statSync(filePath);
-        console.error(`DEBUG: File exists: ${filePath}, size: ${stats.size} bytes`);
-        console.error(`DEBUG: publicKey: ${publicKey}`);
-        console.error(`DEBUG: Using uploadEncrypted() with Lighthouse Kavach SDK`);
+        console.error(`DEBUG: File size: ${stats.size} bytes`);
+        console.error(`DEBUG: Using textToEncrypt() API for Lighthouse encryption`);
         
-        // CRITICAL FIX: Use uploadEncrypted() with proper auth
-        // This encrypts the file with Kavach and stores key shards on Lighthouse nodes
-        const response = await lighthouse.uploadEncrypted(
-            filePath,
+        // NEW: Use textToEncrypt() method which works in browser/node
+        // This encrypts text and uploads to Lighthouse in one call
+        const response = await lighthouse.textToEncrypt(
+            fileContent,
             apiKey,
             publicKey,
-            signedMessage
+            signedMessage,
+            filePath  // Optional filename parameter
         );
         
-        console.error(`DEBUG: uploadEncrypted() response: ${JSON.stringify(response)}`);
+        console.error(`DEBUG: textToEncrypt() response: ${JSON.stringify(response)}`);
         
-        // Check response format - SDK returns {data: {Name, Hash, Size}}
+        // Check response format
         if (!response || !response.data || !response.data.Hash) {
             throw new Error(`Upload returned invalid response: ${JSON.stringify(response)}`);
         }
@@ -181,8 +182,8 @@ async function uploadEncryptedFile() {
         // Return CID and metadata
         console.log(JSON.stringify({
             cid: response.data.Hash,
-            name: response.data.Name,
-            size: response.data.Size
+            name: response.data.Name || filePath.split('/').pop(),
+            size: response.data.Size || stats.size.toString()
         }));
         process.exit(0);
     } catch (error) {
@@ -195,7 +196,7 @@ async function uploadEncryptedFile() {
     }
 }
 
-uploadEncryptedFile();
+uploadWithEncryption();
 """
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:

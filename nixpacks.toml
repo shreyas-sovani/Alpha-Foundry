@@ -1,20 +1,13 @@
-# Railway deployment configuration for Python worker
-# Skip Node.js package installation since we only need Lighthouse CLI globally
+# Railway deployment configuration for Python worker with Lighthouse SDK
+# Extends auto-detected Python provider with Node.js for Lighthouse CLI
 
 [phases.setup]
-nixPkgs = ["python311", "nodejs"]
+nixPkgs = ["...", "nodejs"]
 
 [phases.install]
 cmds = [
-  # Install Python dependencies from worker directory
-  "pip install -r apps/worker/requirements.txt",
-  # Install Lighthouse SDK globally for CLI access
+  "...",
   "npm install -g @lighthouse-web3/sdk",
-  # Verify installation (optional, for debugging)
   "lighthouse-web3 --version || echo 'Lighthouse CLI not found in PATH'",
-  # Import API key if available
   "lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || echo 'API key import skipped'"
 ]
-
-[start]
-cmd = "cd apps/worker && python run.py"

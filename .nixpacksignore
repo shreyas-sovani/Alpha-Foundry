@@ -6,10 +6,3 @@ node_modules/
 
 # Ignore frontend (deployed separately to Vercel)
 frontend/
-
-# Ignore development scripts (not needed in production)
-scripts/
-
-# Ignore state files (persisted externally)
-state/
-apps/worker/state/

@@ -138,16 +138,16 @@ class LighthouseNativeEncryption:
         Raises:
             Exception: If upload fails or Node.js subprocess errors
         """
-        # Create temporary Node.js script for uploadEncrypted
+        # WORKAROUND: Use regular upload() instead of broken uploadEncrypted()
+        # SDK's uploadEncrypted() fails internally at saveShards() call
+        # Alternative: Upload normally, then apply access control separately
         script_content = """
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
 
-async function uploadEncrypted() {
+async function uploadFile() {
     const filePath = process.argv[2];
     const apiKey = process.argv[3];
-    const publicKey = process.argv[4];
-    const signedMessage = process.argv[5];
     
     try {
         // Debug: Check if file exists and is readable
@@ -161,19 +161,22 @@ async function uploadEncrypted() {
         }
         
         console.error(`DEBUG: File exists: ${filePath}, size: ${stats.size} bytes`);
+        console.error(`DEBUG: Using regular upload() instead of broken uploadEncrypted()`);
         
-        const response = await lighthouse.uploadEncrypted(
-            filePath,
-            apiKey,
-            publicKey,
-            signedMessage
-        );
+        // Use regular upload (no SDK encryption)
+        // Access control will be applied separately
+        const response = await lighthouse.upload(filePath, apiKey);
         
-        if (!response || !response.data || response.data.length === 0) {
+        if (!response || !response.data || !response.data.Hash) {
             throw new Error('Upload returned no data');
         }
         
-        console.log(JSON.stringify(response.data[0]));
+        // Return CID and metadata
+        console.log(JSON.stringify({
+            cid: response.data.Hash,
+            name: response.data.Name,
+            size: response.data.Size
+        }));
         process.exit(0);
     } catch (error) {
         console.error(JSON.stringify({
@@ -184,7 +187,7 @@ async function uploadEncrypted() {
     }
 }
 
-uploadEncrypted();
+uploadFile();
 """
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
@@ -192,24 +195,17 @@ uploadEncrypted();
             script_path = f.name
         
         try:
-            # Get signed authentication message
-            print(f"[Lighthouse] Getting signed auth message...")
-            signed_message = self._get_signed_message()
-            
             # Convert to absolute path - Lighthouse SDK requires absolute paths
             abs_file_path = str(Path(file_path).resolve())
             
-            # Run Node.js script with uploadEncrypted
-            # Use current directory as working directory so node can find node_modules
-            print(f"[Lighthouse] Uploading {abs_file_path} with native encryption...")
+            # Run Node.js script with regular upload (no encryption params needed)
+            print(f"[Lighthouse] Uploading {abs_file_path} with regular upload (access control will be applied separately)...")
             result = subprocess.run(
                 [
                     'node',
                     script_path,
                     abs_file_path,
-                    self.api_key,
-                    self.wallet_address,
-                    signed_message
+                    self.api_key
                 ],
                 capture_output=True,
                 text=True,
@@ -244,7 +240,7 @@ uploadEncrypted();
                     error_msg = result.stderr or result.stdout
                     raise Exception(f"Upload failed: {error_msg}")
             
-            # Parse upload result
+            # Parse upload result (regular upload returns {cid, name, size})
             try:
                 upload_result = json.loads(result.stdout)
             except json.JSONDecodeError as e:
@@ -255,9 +251,9 @@ uploadEncrypted();
             
             # Return standardized format
             return {
-                "cid": upload_result["Hash"],
-                "name": upload_result["Name"],
-                "size": upload_result["Size"]
+                "cid": upload_result["cid"],
+                "name": upload_result["name"],
+                "size": upload_result["size"]
             }
             
         finally:

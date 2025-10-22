@@ -148,6 +148,7 @@ const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
 const path = require('path');
 const ethers = require('ethers');
+const { getJWT } = require('@lighthouse-web3/kavach');
 
 async function uploadWithEncryption() {
     const filePath = process.argv[2];
@@ -244,6 +245,14 @@ async function uploadWithEncryption() {
         const signedMessage = await wallet.signMessage(messageText);
         console.error(`  ✓ Signed message: ${signedMessage.substring(0, 20)}...`);
         
+        // Get JWT token for kavach authentication
+        const { JWT } = await getJWT(publicKey, signedMessage);
+        console.error(`  ✓ JWT token obtained: ${JWT ? JWT.substring(0, 20) + '...' : 'MISSING'}`);
+        
+        if (!JWT) {
+            throw new Error('Failed to get JWT token from kavach');
+        }
+        
         // ===== DEBUG TIP #5: SDK method availability =====
         console.error(`\\n[TIP #5] SDK METHOD CHECK:`);
         console.error(`  ✓ lighthouse object: ${typeof lighthouse}`);
@@ -282,22 +291,23 @@ async function uploadWithEncryption() {
             throw new Error(`Basic upload failed: ${testError.message}`);
         }
         
-        // ===== NOW TRY ENCRYPTED UPLOAD WITH TEXT METHOD =====
-        console.error(`\\n[UPLOAD] Using textUploadEncrypted() with file content...`);
+        // ===== NOW TRY ENCRYPTED UPLOAD WITH JWT TOKEN =====
+        console.error(`\\n[UPLOAD] Using textUploadEncrypted() with JWT token...`);
         console.error(`  → fileContent length: ${fileContent.length} chars`);
         console.error(`  → apiKey: ${apiKey.substring(0, 10)}...`);
         console.error(`  → publicKey: ${publicKey}`);
+        console.error(`  → JWT: ${JWT.substring(0, 20)}...`);
         
         let response;
         const startTime = Date.now();
         
         try {
-            // Try textUploadEncrypted with the content we already read
+            // Use JWT token instead of signedMessage - this authenticates with kavach
             response = await lighthouse.textUploadEncrypted(
                 fileContent,
                 apiKey,
                 publicKey,
-                signedMessage
+                JWT  // JWT token for kavach authentication
             );
             const elapsed = Date.now() - startTime;
             console.error(`\\n[SUCCESS] uploadEncrypted() completed in ${elapsed}ms ✓`);

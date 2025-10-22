@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     
     # Lighthouse Native Encryption (for ERC20 token-gating)
     LIGHTHOUSE_WALLET_PRIVATE_KEY: Optional[str] = ""  # For signing auth messages
-    LIGHTHOUSE_USE_NATIVE_ENCRYPTION: bool = True  # Use native encryption vs custom AES
+    LIGHTHOUSE_USE_NATIVE_ENCRYPTION: bool = False  # Disabled - not required for hackathon, just store data
     
     # DataCoin ERC20 Token-Gating
     DATACOIN_CONTRACT_ADDRESS: str = "0x8d302FfB73134235EBaD1B9Cd9C202d14f906FeC"

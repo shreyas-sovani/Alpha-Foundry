@@ -24,7 +24,7 @@ yarn-error.log*
 
 # Local env files
 .env*.local
-.env.production
+# Note: .env.production is committed because it only contains public URLs (no secrets)
 
 # Vercel
 .vercel

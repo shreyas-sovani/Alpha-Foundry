@@ -56,8 +56,21 @@ interface WalletState {
   isEligible: boolean
 }
 
-// Fetcher for SWR
-const fetcher = (url: string) => fetch(url).then((r) => r.json())
+// Fetcher for SWR with better error handling
+const fetcher = async (url: string) => {
+  console.log('Fetching from:', url)
+  const response = await fetch(url)
+  
+  if (!response.ok) {
+    const errorText = await response.text()
+    console.error('Fetch failed:', response.status, errorText)
+    throw new Error(`HTTP ${response.status}: ${errorText}`)
+  }
+  
+  const data = await response.json()
+  console.log('Fetched metadata successfully:', data)
+  return data
+}
 
 export default function UnlockPage() {
   // Wallet state
@@ -522,7 +535,12 @@ export default function UnlockPage() {
         
         {/* Data Info Card */}
         <div className="bg-gray-800/50 backdrop-blur rounded-xl p-6 mb-6 border border-gray-700">
-          <h2 className="text-2xl font-bold mb-4">📊 Encrypted Data Feed</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-bold">📊 Encrypted Data Feed</h2>
+            <div className="text-xs text-gray-500 font-mono">
+              API: {METADATA_API}
+            </div>
+          </div>
           
           {metadataError ? (
             <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">

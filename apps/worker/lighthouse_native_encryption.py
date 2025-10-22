@@ -236,9 +236,10 @@ async function uploadWithEncryption() {
         console.error(`  ✓ Derived address: ${publicKey}`);
         
         // Get signed message for authentication
-        const messageText = await fetch(
-            \`https://api.lighthouse.storage/api/auth/get_message?publicKey=\${publicKey}\`
-        ).then(r => r.json()).then(data => data.message || data);
+        const authUrl = 'https://api.lighthouse.storage/api/auth/get_message?publicKey=' + publicKey;
+        const messageText = await fetch(authUrl)
+            .then(r => r.json())
+            .then(data => data.message || data);
         
         const signedMessage = await wallet.signMessage(messageText);
         console.error(`  ✓ Signed message: ${signedMessage.substring(0, 20)}...`);

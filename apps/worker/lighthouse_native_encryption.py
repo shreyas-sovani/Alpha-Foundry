@@ -273,6 +273,49 @@ async function uploadWithEncryption() {
             throw new Error(`Basic upload failed: ${testError.message}`);
         }
         
+        // ===== MONKEY-PATCH KAVACH TO EXPOSE saveShards ERROR =====
+        console.error(`\\n[KAVACH PATCH] Intercepting saveShards() to expose hidden errors...`);
+        
+        const kavach = require('@lighthouse-web3/kavach');
+        const originalSaveShards = kavach.saveShards;
+        
+        kavach.saveShards = async function(...args) {
+            console.error(`\\n  → saveShards() called:`);
+            console.error(`    publicKey: ${args[0]}`);
+            console.error(`    cid: ${args[1]}`);
+            console.error(`    signedMessage: ${args[2] ? args[2].substring(0, 30) + '...' : 'MISSING'}`);
+            console.error(`    keyShards: ${JSON.stringify(args[3]).substring(0, 150)}...`);
+            
+            try {
+                const result = await originalSaveShards(...args);
+                
+                console.error(`\\n  → saveShards() returned:`);
+                console.error(`    ${JSON.stringify(result, null, 2)}`);
+                
+                if (result.error) {
+                    console.error(`\\n  ❌ ❌ ❌ REAL ERROR FROM saveShards() ❌ ❌ ❌`);
+                    console.error(`    ${JSON.stringify(result.error, null, 2)}`);
+                    
+                    // Try to extract meaningful error info
+                    if (typeof result.error === 'object') {
+                        console.error(`\\n  → Error details:`);
+                        if (result.error.message) console.error(`    message: ${result.error.message}`);
+                        if (result.error.status) console.error(`    status: ${result.error.status}`);
+                        if (result.error.statusText) console.error(`    statusText: ${result.error.statusText}`);
+                        if (result.error.data) console.error(`    data: ${JSON.stringify(result.error.data)}`);
+                    }
+                }
+                
+                return result;
+            } catch (kavachError) {
+                console.error(`\\n  ❌ saveShards() THREW EXCEPTION:`);
+                console.error(`    Type: ${kavachError.constructor.name}`);
+                console.error(`    Message: ${kavachError.message}`);
+                console.error(`    Stack: ${kavachError.stack}`);
+                throw kavachError;
+            }
+        };
+        
         // ===== NOW TRY ENCRYPTED UPLOAD =====
         console.error(`\\n[UPLOAD] Now trying ENCRYPTED upload...`);
         console.error(`  → text: ${fileContent.length} chars`);

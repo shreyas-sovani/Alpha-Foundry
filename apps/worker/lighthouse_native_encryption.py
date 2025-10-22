@@ -257,8 +257,6 @@ async function uploadWithEncryption() {
         // ===== TEST: TRY NON-ENCRYPTED UPLOAD FIRST =====
         console.error(`\\n[TEST] Attempting non-encrypted upload first to verify connectivity...`);
         
-        const lighthouse = require('@lighthouse-web3/sdk');
-        
         try {
             const testUpload = await lighthouse.uploadText(
                 'Test upload to verify connectivity',

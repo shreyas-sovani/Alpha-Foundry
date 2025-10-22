@@ -138,37 +138,44 @@ class LighthouseNativeEncryption:
         Raises:
             Exception: If upload fails or Node.js subprocess errors
         """
-        # WORKAROUND: Use regular upload() instead of broken uploadEncrypted()
-        # SDK's uploadEncrypted() fails internally at saveShards() call
-        # Alternative: Upload normally, then apply access control separately
+        # FIX: Use uploadEncrypted() correctly with signed message FIRST
+        # The SDK requires authentication BEFORE calling uploadEncrypted()
+        # Previous attempts failed because we didn't get signed message upfront
         script_content = """
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
 
-async function uploadFile() {
+async function uploadEncryptedFile() {
     const filePath = process.argv[2];
     const apiKey = process.argv[3];
+    const publicKey = process.argv[4];
+    const signedMessage = process.argv[5];
     
     try {
-        // Debug: Check if file exists and is readable
+        // Debug: Verify inputs
         if (!fs.existsSync(filePath)) {
             throw new Error(`File does not exist: ${filePath}`);
         }
         
         const stats = fs.statSync(filePath);
-        if (!stats.isFile()) {
-            throw new Error(`Path is not a file: ${filePath}`);
-        }
-        
         console.error(`DEBUG: File exists: ${filePath}, size: ${stats.size} bytes`);
-        console.error(`DEBUG: Using regular upload() instead of broken uploadEncrypted()`);
+        console.error(`DEBUG: publicKey: ${publicKey}`);
+        console.error(`DEBUG: Using uploadEncrypted() with Lighthouse Kavach SDK`);
         
-        // Use regular upload (no SDK encryption)
-        // Access control will be applied separately
-        const response = await lighthouse.upload(filePath, apiKey);
+        // CRITICAL FIX: Use uploadEncrypted() with proper auth
+        // This encrypts the file with Kavach and stores key shards on Lighthouse nodes
+        const response = await lighthouse.uploadEncrypted(
+            filePath,
+            apiKey,
+            publicKey,
+            signedMessage
+        );
         
+        console.error(`DEBUG: uploadEncrypted() response: ${JSON.stringify(response)}`);
+        
+        // Check response format - SDK returns {data: {Name, Hash, Size}}
         if (!response || !response.data || !response.data.Hash) {
-            throw new Error('Upload returned no data');
+            throw new Error(`Upload returned invalid response: ${JSON.stringify(response)}`);
         }
         
         // Return CID and metadata
@@ -181,13 +188,14 @@ async function uploadFile() {
     } catch (error) {
         console.error(JSON.stringify({
             error: error.message || 'Unknown error',
-            stack: error.stack
+            stack: error.stack,
+            details: error.response ? JSON.stringify(error.response.data) : null
         }));
         process.exit(1);
     }
 }
 
-uploadFile();
+uploadEncryptedFile();
 """
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
@@ -195,17 +203,24 @@ uploadFile();
             script_path = f.name
         
         try:
+            # CRITICAL: Get signed message BEFORE uploading
+            # This authenticates with Lighthouse and enables uploadEncrypted()
+            print(f"[Lighthouse] Getting signed auth message for uploadEncrypted()...")
+            signed_message = self._get_signed_message()
+            
             # Convert to absolute path - Lighthouse SDK requires absolute paths
             abs_file_path = str(Path(file_path).resolve())
             
-            # Run Node.js script with regular upload (no encryption params needed)
-            print(f"[Lighthouse] Uploading {abs_file_path} with regular upload (access control will be applied separately)...")
+            # Run Node.js script with uploadEncrypted() and authentication
+            print(f"[Lighthouse] Uploading {abs_file_path} with native encryption...")
             result = subprocess.run(
                 [
                     'node',
                     script_path,
                     abs_file_path,
-                    self.api_key
+                    self.api_key,
+                    self.wallet_address,
+                    signed_message
                 ],
                 capture_output=True,
                 text=True,

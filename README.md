@@ -2,6 +2,51 @@
 
 Real-time arbitrage opportunity detection and monetization platform for EVM chains. Continuously monitors DEX pools, detects price discrepancies, and publishes encrypted datasets to **Lighthouse Storage** with automatic cleanup. Built for production deployment on **Railway** with enterprise-grade reliability.
 
+---
+
+## 🪙 **FOR ETHONLINE 2025 JUDGES** - Get Access Tokens
+
+This project uses **DataCoin** (DADC) for token-gated access to premium MEV data.
+
+### 🎯 **How to Get DADC Tokens (Takes 30 seconds):**
+
+**Option 1: Via Etherscan (Easiest)**
+1. Visit the faucet: [**Click Here to Claim Tokens**](https://sepolia.etherscan.io/address/0xB0864079e5A5f898Da37ffF6c8bce762A2eD35BB#writeContract)
+2. Click **"Connect to Web3"** and connect your wallet
+3. Find the **"claimTokens"** function
+4. Click **"Write"** and confirm the transaction
+5. ✅ You'll receive **100 DADC tokens** instantly!
+
+**Option 2: Via Smart Contract**
+```javascript
+// Faucet Contract: 0xB0864079e5A5f898Da37ffF6c8bce762A2eD35BB
+const faucet = new ethers.Contract(
+  "0xB0864079e5A5f898Da37ffF6c8bce762A2eD35BB",
+  ["function claimTokens() external"],
+  signer
+);
+await faucet.claimTokens();
+```
+
+**Check Your Balance:**
+```javascript
+// DataCoin: 0x8d302FfB73134235EBaD1B9Cd9C202d14f906FeC
+const dataCoin = new ethers.Contract(
+  "0x8d302FfB73134235EBaD1B9Cd9C202d14f906FeC",
+  ["function balanceOf(address) view returns (uint256)"],
+  provider
+);
+const balance = await dataCoin.balanceOf(yourAddress);
+```
+
+**Important Notes:**
+- 🌐 Network: **Sepolia Testnet**
+- 💧 Each wallet can claim **once** (anti-spam protection)
+- 🎫 Minimum balance needed: **1 DADC** token
+- ⚡ Claims are instant (no waiting period)
+
+---
+
 ## 🎯 What It Does
 
 - **📊 Real-Time Monitoring**: Ingests swap events from Base, Ethereum, Polygon DEX pools every 5 minutes
@@ -216,7 +261,27 @@ cleanup_lighthouse_storage(
 - ✅ Added proper error handling for CLI availability
 - ✅ Added setup verification on startup
 
-## 📚 Documentation & Resources
+## � Smart Contract Addresses (Sepolia Testnet)
+
+| Contract | Address | Purpose |
+|----------|---------|---------|
+| **DataCoin (DADC)** | [`0x8d302FfB73134235EBaD1B9Cd9C202d14f906FeC`](https://sepolia.etherscan.io/address/0x8d302FfB73134235EBaD1B9Cd9C202d14f906FeC) | Token-gated access to premium data |
+| **Faucet** | [`0xB0864079e5A5f898Da37ffF6c8bce762A2eD35BB`](https://sepolia.etherscan.io/address/0xB0864079e5A5f898Da37ffF6c8bce762A2eD35BB) | Judges claim tokens here |
+| **Liquidity Pool** | [`0x8EF4B1670D382b47DBbF30ebE2Bb15e52Ed2236c`](https://sepolia.etherscan.io/address/0x8EF4B1670D382b47DBbF30ebE2Bb15e52Ed2236c) | DADC/LSDC pool |
+
+**Token Details:**
+- Name: DEXArb Data Coin
+- Symbol: DADC
+- Decimals: 18
+- Total Supply: 100,000,000,000 DADC
+- Metadata: [ipfs://bafkreie73wguaf7yucgzcudbkivtgtxzvyv2efjg24s76j67lu7cbt7vcy](https://ipfs.io/ipfs/bafkreie73wguaf7yucgzcudbkivtgtxzvyv2efjg24s76j67lu7cbt7vcy)
+
+**Deployment Info:**
+- Factory: Official 1MB.io factory (`0xC7Bc3432B0CcfeFb4237172340Cd8935f95f2990`)
+- Lock Asset: 10,000 LSDC
+- Creation Tx: [`0x0bf7c4da8b9b05137d08af046d8d360863398f91d747b2d4ac3f5c4bafe235ac`](https://sepolia.etherscan.io/tx/0x0bf7c4da8b9b05137d08af046d8d360863398f91d747b2d4ac3f5c4bafe235ac)
+
+## �📚 Documentation & Resources
 
 ### Platform Documentation
 - [Railway Platform](https://docs.railway.app/)
@@ -228,6 +293,7 @@ cleanup_lighthouse_storage(
 - [Base Network](https://docs.base.org/)
 - [Chainlink Price Feeds](https://docs.chain.link/data-feeds)
 - [Uniswap V3](https://docs.uniswap.org/contracts/v3/overview)
+- [1MB.io Platform](https://1mb.io/) - DataCoin creation platform
 
 ### Future Integration
 - [Agentverse Platform](https://docs.agentverse.ai/)

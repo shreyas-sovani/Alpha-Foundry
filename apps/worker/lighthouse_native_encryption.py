@@ -219,11 +219,30 @@ uploadEncrypted();
             
             # Debug: Print stderr even on success to see debug messages
             if result.stderr:
-                print(f"[Lighthouse Debug] {result.stderr}")
+                # Try to parse as JSON error, otherwise print as-is
+                try:
+                    stderr_lines = result.stderr.strip().split('\n')
+                    # Last line should be the JSON error if failed
+                    if result.returncode != 0 and stderr_lines:
+                        error_json = json.loads(stderr_lines[-1])
+                        print(f"[Lighthouse Error] {error_json.get('error', 'Unknown error')}")
+                        if 'stack' in error_json:
+                            print(f"[Lighthouse Stack] {error_json['stack'][:500]}")
+                    else:
+                        # Just debug output
+                        print(f"[Lighthouse Debug] {result.stderr}")
+                except (json.JSONDecodeError, IndexError):
+                    print(f"[Lighthouse Debug] {result.stderr}")
             
             if result.returncode != 0:
-                error_msg = result.stderr or result.stdout
-                raise Exception(f"Upload failed: {error_msg}")
+                # Try to extract JSON error from stderr
+                try:
+                    stderr_lines = result.stderr.strip().split('\n')
+                    error_json = json.loads(stderr_lines[-1])
+                    raise Exception(f"Lighthouse SDK error: {error_json.get('error', 'Unknown error')}")
+                except (json.JSONDecodeError, IndexError):
+                    error_msg = result.stderr or result.stdout
+                    raise Exception(f"Upload failed: {error_msg}")
             
             # Parse upload result
             try:

@@ -15,14 +15,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy Node.js package files and install (for caching)
-COPY apps/worker/package*.json apps/worker/
-RUN cd apps/worker && npm install && cd /app
+# Copy Node.js package files and install GLOBALLY
+COPY apps/worker/package*.json /tmp/
+RUN cd /tmp && npm install -g @lighthouse-web3/sdk ethers && rm -rf /tmp/*
 
-# Copy rest of application code
+# Copy application code
 COPY . .
 
-# Set environment variables
+# Set NODE_PATH so node can find globally installed modules
+ENV NODE_PATH=/usr/local/lib/node_modules
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 

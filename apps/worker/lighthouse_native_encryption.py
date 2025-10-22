@@ -195,7 +195,7 @@ uploadEncrypted();
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5 minutes timeout
-                cwd=Path(__file__).parent  # Run in the same directory as this script
+                # Don't set cwd - use global NODE_PATH instead
             )
             
             if result.returncode != 0:
@@ -329,7 +329,7 @@ applyAccessControl();
                 capture_output=True,
                 text=True,
                 timeout=60,  # 1 minute timeout
-                cwd=Path(__file__).parent  # Run in the same directory as this script
+                # Don't set cwd - use global NODE_PATH instead
             )
             
             if result.returncode != 0:

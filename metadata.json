@@ -1,0 +1,33 @@
+{
+  "name": "DEXArb Data Coin",
+  "symbol": "DADC",
+  "description": "DataCoin for DEXArb platform - ETHOnline 2025 Lighthouse Prize submission. Enables token-gated access to MEV trading data, DEX arbitrage analytics, and real-time swap monitoring across Ethereum mainnet.",
+  "image": "ipfs://bafybeih5j5recyxiwscbtjl7o5rmv22rijmeq552iovrguas45s4766yw4",
+  "external_url": "https://github.com/shreyas-sovani/Alpha-Foundry",
+  "attributes": [
+    {
+      "trait_type": "Category",
+      "value": "MEV Trading Data"
+    },
+    {
+      "trait_type": "Platform",
+      "value": "DEXArb"
+    },
+    {
+      "trait_type": "Hackathon",
+      "value": "ETHOnline 2025"
+    },
+    {
+      "trait_type": "Prize Track",
+      "value": "Lighthouse - Best Use of 1MB.io"
+    },
+    {
+      "trait_type": "Network",
+      "value": "Ethereum Mainnet + Sepolia"
+    },
+    {
+      "trait_type": "Use Case",
+      "value": "Token-Gated Data Access"
+    }
+  ]
+}

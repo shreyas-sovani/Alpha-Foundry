@@ -1,0 +1,24 @@
+{
+  "name": "dexarb-datacoin-setup",
+  "version": "1.0.0",
+  "description": "DEXArb DataCoin creation and management for ETHOnline 2025",
+  "main": "scripts/createDEXArbDataCoin.js",
+  "scripts": {
+    "create": "node scripts/createDEXArbDataCoin.js",
+    "mint": "node scripts/mintTokens.js"
+  },
+  "keywords": [
+    "datacoin",
+    "lighthouse",
+    "1mb.io",
+    "ethonline",
+    "dexarb"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.9.0",
+    "bcrypt": "^5.1.1",
+    "dotenv": "^16.3.1"
+  }
+}

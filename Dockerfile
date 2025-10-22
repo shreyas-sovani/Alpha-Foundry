@@ -11,17 +11,16 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# Copy Python requirements and install (for caching)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy Node.js package files and install (for caching)
+COPY apps/worker/package*.json apps/worker/
+RUN cd apps/worker && npm install && cd /app
 
-# Install Lighthouse SDK from apps/worker/package.json
-WORKDIR /app/apps/worker
-RUN npm install
-WORKDIR /app
+# Copy rest of application code
+COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

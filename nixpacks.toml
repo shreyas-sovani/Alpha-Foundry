@@ -12,3 +12,6 @@ cmds = [
   "lighthouse-web3 api-key --import $LIGHTHOUSE_API_KEY || echo 'API key import skipped'"
 ]
 
+[start]
+cmd = "python apps/worker/run.py"
+

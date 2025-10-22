@@ -101,10 +101,13 @@ class LighthouseNativeEncryption:
             timeout=30
         )
         response.raise_for_status()
-        message = response.json()
+        response_data = response.json()
+        
+        # Extract message from response - API returns {"message": "..."}
+        message_text = response_data.get("message") if isinstance(response_data, dict) else response_data
         
         # Step 2: Sign message with private key
-        message_hash = encode_defunct(text=message)
+        message_hash = encode_defunct(text=message_text)
         signed = self.account.sign_message(message_hash)
         
         # Return signature with 0x prefix

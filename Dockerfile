@@ -15,11 +15,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Lighthouse SDK globally
-RUN npm install -g @lighthouse-web3/sdk
-
 # Copy application code
 COPY . .
+
+# Install Lighthouse SDK from apps/worker/package.json
+WORKDIR /app/apps/worker
+RUN npm install
+WORKDIR /app
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

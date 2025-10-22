@@ -16,6 +16,7 @@ const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'https://ethereum-sepolia-rpc
 const DATACOIN_ADDRESS = process.env.NEXT_PUBLIC_DATACOIN_ADDRESS || '0x8d302FfB73134235EBaD1B9Cd9C202d14f906FeC'
 const FAUCET_ADDRESS = process.env.NEXT_PUBLIC_FAUCET_ADDRESS || '0xB0864079e5A5f898Da37ffF6c8bce762A2eD35BB'
 const MIN_BALANCE = parseFloat(process.env.NEXT_PUBLIC_MIN_BALANCE || '1.0')
+const AGENT_ADDRESS = process.env.NEXT_PUBLIC_AGENT_ADDRESS || '' // Your Agentverse agent address
 
 // Minimal ABIs
 const DATACOIN_ABI = [
@@ -93,6 +94,7 @@ export default function UnlockPage() {
   const [success, setSuccess] = useState<string | null>(null)
   const [decryptedData, setDecryptedData] = useState<string | null>(null)
   const [showFAQ, setShowFAQ] = useState(false)
+  const [showAgentChat, setShowAgentChat] = useState(false)
   
   // Fetch metadata from backend
   const { data: metadata, error: metadataError, mutate: refetchMetadata } = useSWR<Metadata>(
@@ -789,6 +791,71 @@ export default function UnlockPage() {
           </p>
         </div>
       </div>
+      
+      {/* Agentverse Chat Widget - Floating Button */}
+      {AGENT_ADDRESS && (
+        <>
+          {/* Chat Toggle Button */}
+          <button
+            onClick={() => setShowAgentChat(!showAgentChat)}
+            className="fixed bottom-6 right-6 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-full p-4 shadow-lg transition-all duration-300 hover:scale-110 z-50"
+            title="Chat with AI Agent"
+          >
+            {showAgentChat ? (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+              </svg>
+            )}
+          </button>
+          
+          {/* Chat Window */}
+          {showAgentChat && (
+            <div className="fixed bottom-24 right-6 w-96 h-[600px] bg-gray-900 border-2 border-blue-500 rounded-lg shadow-2xl z-50 flex flex-col">
+              {/* Chat Header */}
+              <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-4 rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                      🤖
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-white">DEXArb AI Agent</h3>
+                      <p className="text-xs text-gray-200">Powered by Agentverse</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowAgentChat(false)}
+                    className="text-white hover:text-gray-300"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              
+              {/* Chat Iframe */}
+              <div className="flex-1 overflow-hidden">
+                <iframe
+                  src={`https://agentverse.ai/chat/${AGENT_ADDRESS}`}
+                  className="w-full h-full border-0"
+                  title="Agentverse Chat"
+                  allow="clipboard-write"
+                />
+              </div>
+              
+              {/* Chat Footer */}
+              <div className="bg-gray-800 p-2 rounded-b-lg text-xs text-gray-400 text-center">
+                Ask about arbitrage opportunities, data stats, or explore transactions
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </main>
   )
 }

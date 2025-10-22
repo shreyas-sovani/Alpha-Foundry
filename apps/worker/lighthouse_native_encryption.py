@@ -246,10 +246,15 @@ async function uploadWithEncryption() {
         console.error(`  ✓ Signed message: ${signedMessage.substring(0, 20)}...`);
         
         // Get JWT token for kavach authentication
-        const { JWT } = await getJWT(publicKey, signedMessage);
+        console.error(`\\n  → Calling getJWT(publicKey, signedMessage)...`);
+        const jwtResult = await getJWT(publicKey, signedMessage);
+        console.error(`  → getJWT() returned: ${JSON.stringify(jwtResult)}`);
+        
+        const JWT = jwtResult?.JWT || jwtResult?.data?.JWT;
         console.error(`  ✓ JWT token obtained: ${JWT ? JWT.substring(0, 20) + '...' : 'MISSING'}`);
         
         if (!JWT) {
+            console.error(`  ❌ JWT is missing! Full getJWT result: ${JSON.stringify(jwtResult, null, 2)}`);
             throw new Error('Failed to get JWT token from kavach');
         }
         

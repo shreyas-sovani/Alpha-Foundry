@@ -140,12 +140,12 @@ class LighthouseNativeEncryption:
         Raises:
             Exception: If upload fails or Node.js subprocess errors
         """
-        # CORRECTED APPROACH: Use textUploadEncrypted() API (not textToEncrypt!)
-        # uploadEncrypted() is broken in SDK - fails at line 43 (encryption step)
-        # textUploadEncrypted() encrypts text content and uploads in one call
+        # COMPREHENSIVE DEBUGGING: All tips from user's debugging guide
+        # Testing: file size, encoding, SDK version, Node crypto, parameters, etc.
         script_content = """
 const lighthouse = require('@lighthouse-web3/sdk');
 const fs = require('fs');
+const path = require('path');
 
 async function uploadWithEncryption() {
     const filePath = process.argv[2];
@@ -154,46 +154,116 @@ async function uploadWithEncryption() {
     const signedMessage = process.argv[5];
     
     try {
-        // STEP 1: Validate inputs
-        console.error(`DEBUG 1: Starting upload process`);
-        console.error(`DEBUG 1.1: filePath = ${filePath}`);
-        console.error(`DEBUG 1.2: apiKey = ${apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'}`);
-        console.error(`DEBUG 1.3: publicKey = ${publicKey}`);
-        console.error(`DEBUG 1.4: signedMessage = ${signedMessage ? signedMessage.substring(0, 20) + '...' : 'MISSING'}`);
+        console.error(`\\n========== COMPREHENSIVE LIGHTHOUSE DEBUGGING ==========`);
         
-        // STEP 2: Check file exists
-        console.error(`DEBUG 2: Checking file existence`);
+        // ===== DEBUG TIP #1: File validation (size, encoding) =====
+        console.error(`\\n[TIP #1] FILE VALIDATION:`);
         if (!fs.existsSync(filePath)) {
             throw new Error(`File does not exist: ${filePath}`);
         }
-        console.error(`DEBUG 2.1: File exists ✓`);
         
-        // STEP 3: Read file content
-        console.error(`DEBUG 3: Reading file content`);
-        const fileContent = fs.readFileSync(filePath, 'utf8');
         const stats = fs.statSync(filePath);
-        console.error(`DEBUG 3.1: File size: ${stats.size} bytes`);
-        console.error(`DEBUG 3.2: Content length: ${fileContent.length} characters`);
-        console.error(`DEBUG 3.3: First 100 chars: ${fileContent.substring(0, 100)}`);
+        console.error(`  ✓ File exists: ${filePath}`);
+        console.error(`  ✓ File size: ${stats.size} bytes (${(stats.size/1024).toFixed(2)} KB)`);
         
-        // STEP 4: Validate SDK method exists
-        console.error(`DEBUG 4: Checking SDK method availability`);
-        console.error(`DEBUG 4.1: lighthouse object type: ${typeof lighthouse}`);
-        console.error(`DEBUG 4.2: textUploadEncrypted exists: ${typeof lighthouse.textUploadEncrypted}`);
+        // Check if file is too large (>10MB as mentioned in tips)
+        if (stats.size > 10 * 1024 * 1024) {
+            throw new Error(`File too large: ${stats.size} bytes (max 10MB for encryption)`);
+        }
+        
+        // Read and validate UTF-8 content
+        let fileContent;
+        try {
+            fileContent = fs.readFileSync(filePath, 'utf8');
+            console.error(`  ✓ File encoding: UTF-8 valid`);
+            console.error(`  ✓ Content length: ${fileContent.length} characters`);
+            console.error(`  ✓ First 100 chars: ${fileContent.substring(0, 100).replace(/\\n/g, '\\\\n')}`);
+            
+            // Check for null bytes or invalid UTF-8
+            if (fileContent.includes('\\0')) {
+                throw new Error(`File contains null bytes (invalid for text upload)`);
+            }
+        } catch (encError) {
+            throw new Error(`File encoding error: ${encError.message}. Try: iconv -f utf-8 -t utf-8 -c ${filePath} -o ${filePath}`);
+        }
+        
+        // ===== DEBUG TIP #2: SDK version check =====
+        console.error(`\\n[TIP #2] SDK VERSION CHECK:`);
+        const packageJson = require('@lighthouse-web3/sdk/package.json');
+        console.error(`  ✓ SDK version: ${packageJson.version}`);
+        console.error(`  ✓ SDK name: ${packageJson.name}`);
+        
+        // Warn if old version (0.2.8-0.3.0 had known bugs)
+        const version = packageJson.version;
+        if (version.startsWith('0.2.') || version.startsWith('0.3.')) {
+            console.error(`  ⚠️  WARNING: SDK version ${version} has known encryption bugs. Recommend 0.4.0+`);
+        }
+        
+        // ===== DEBUG TIP #3: Node environment check =====
+        console.error(`\\n[TIP #3] NODE ENVIRONMENT:`);
+        console.error(`  ✓ Node version: ${process.version}`);
+        console.error(`  ✓ Platform: ${process.platform}`);
+        
+        // Check crypto availability (required for encryption)
+        const crypto = require('crypto');
+        console.error(`  ✓ Node crypto available: ${typeof crypto.createHash === 'function'}`);
+        
+        if (parseInt(process.version.slice(1)) < 18) {
+            console.error(`  ⚠️  WARNING: Node ${process.version} < 18. Encryption may fail!`);
+        }
+        
+        // ===== DEBUG TIP #4: Parameter validation =====
+        console.error(`\\n[TIP #4] PARAMETER VALIDATION:`);
+        console.error(`  ✓ apiKey format: ${apiKey ? apiKey.substring(0, 10) + '...' : '❌ MISSING'}`);
+        console.error(`  ✓ apiKey length: ${apiKey ? apiKey.length : 0} chars`);
+        console.error(`  ✓ publicKey (wallet): ${publicKey}`);
+        console.error(`  ✓ publicKey has 0x: ${publicKey.startsWith('0x')}`);
+        console.error(`  ✓ publicKey length: ${publicKey.length} (should be 42)`);
+        console.error(`  ✓ signedMessage format: ${signedMessage ? signedMessage.substring(0, 20) + '...' : '❌ MISSING'}`);
+        console.error(`  ✓ signedMessage length: ${signedMessage ? signedMessage.length : 0} (should be 132)`);
+        
+        if (!apiKey || apiKey.length < 10) {
+            throw new Error(`Invalid API key: too short or missing`);
+        }
+        
+        if (!publicKey.startsWith('0x') || publicKey.length !== 42) {
+            throw new Error(`Invalid publicKey format: ${publicKey} (need 0x prefix + 40 hex chars)`);
+        }
+        
+        if (!signedMessage || signedMessage.length !== 132) {
+            throw new Error(`Invalid signedMessage: length ${signedMessage ? signedMessage.length : 0} (expected 132)`);
+        }
+        
+        // ===== DEBUG TIP #5: SDK method availability =====
+        console.error(`\\n[TIP #5] SDK METHOD CHECK:`);
+        console.error(`  ✓ lighthouse object: ${typeof lighthouse}`);
+        console.error(`  ✓ textUploadEncrypted: ${typeof lighthouse.textUploadEncrypted}`);
+        console.error(`  ✓ uploadEncrypted: ${typeof lighthouse.uploadEncrypted}`);
+        console.error(`  ✓ upload (non-encrypted): ${typeof lighthouse.upload}`);
         
         if (typeof lighthouse.textUploadEncrypted !== 'function') {
-            throw new Error(`textUploadEncrypted is not a function (type: ${typeof lighthouse.textUploadEncrypted})`);
+            throw new Error(`textUploadEncrypted not available in SDK ${version}`);
         }
-        console.error(`DEBUG 4.3: textUploadEncrypted is a function ✓`);
         
-        // STEP 5: Call textUploadEncrypted with detailed error catching
-        console.error(`DEBUG 5: Calling textUploadEncrypted()`);
-        console.error(`DEBUG 5.1: Parameter 1 (text): ${fileContent.length} chars`);
-        console.error(`DEBUG 5.2: Parameter 2 (apiKey): ${apiKey.substring(0, 10)}...`);
-        console.error(`DEBUG 5.3: Parameter 3 (publicKey): ${publicKey}`);
-        console.error(`DEBUG 5.4: Parameter 4 (signedMessage): ${signedMessage.substring(0, 20)}...`);
+        // ===== DEBUG TIP #6: Test smaller file first (if > 100KB) =====
+        console.error(`\\n[TIP #6] FILE SIZE STRATEGY:`);
+        if (stats.size > 100 * 1024) {
+            console.error(`  ℹ️  File is ${(stats.size/1024).toFixed(2)} KB. Testing with full content.`);
+            console.error(`  ℹ️  If this fails, try: head -n 50 ${filePath} > test.jsonl`);
+        } else {
+            console.error(`  ✓ File size OK: ${(stats.size/1024).toFixed(2)} KB (< 100KB)`);
+        }
+        
+        // ===== MAIN UPLOAD ATTEMPT =====
+        console.error(`\\n[UPLOAD] Calling textUploadEncrypted()...`);
+        console.error(`  → text: ${fileContent.length} chars`);
+        console.error(`  → apiKey: ${apiKey.substring(0, 10)}...`);
+        console.error(`  → publicKey: ${publicKey}`);
+        console.error(`  → signedMessage: ${signedMessage.substring(0, 20)}...`);
         
         let response;
+        const startTime = Date.now();
+        
         try {
             response = await lighthouse.textUploadEncrypted(
                 fileContent,
@@ -201,55 +271,74 @@ async function uploadWithEncryption() {
                 publicKey,
                 signedMessage
             );
-            console.error(`DEBUG 5.5: textUploadEncrypted() returned ✓`);
+            const elapsed = Date.now() - startTime;
+            console.error(`\\n[SUCCESS] textUploadEncrypted() completed in ${elapsed}ms ✓`);
         } catch (sdkError) {
-            console.error(`DEBUG 5.6: textUploadEncrypted() threw error!`);
-            console.error(`DEBUG 5.7: Error type: ${sdkError.constructor.name}`);
-            console.error(`DEBUG 5.8: Error message: ${sdkError.message}`);
-            console.error(`DEBUG 5.9: Error stack: ${sdkError.stack}`);
+            const elapsed = Date.now() - startTime;
+            console.error(`\\n[ERROR] textUploadEncrypted() failed after ${elapsed}ms`);
+            console.error(`  ❌ Error type: ${sdkError.constructor.name}`);
+            console.error(`  ❌ Error message: ${sdkError.message}`);
+            console.error(`  ❌ Error stack:\\n${sdkError.stack}`);
+            
             if (sdkError.response) {
-                console.error(`DEBUG 5.10: Error response: ${JSON.stringify(sdkError.response)}`);
+                console.error(`  ❌ HTTP response: ${JSON.stringify(sdkError.response.data || sdkError.response)}`);
             }
             if (sdkError.code) {
-                console.error(`DEBUG 5.11: Error code: ${sdkError.code}`);
+                console.error(`  ❌ Error code: ${sdkError.code}`);
             }
-            throw sdkError; // Re-throw to be caught by outer catch
+            
+            // Specific guidance based on error
+            if (sdkError.message.includes('saveShards')) {
+                console.error(`\\n  💡 HINT: saveShards() failed - likely authentication issue`);
+                console.error(`     Check: publicKey and signedMessage are correct`);
+                console.error(`     Try: Regenerate signed message`);
+            } else if (sdkError.message.includes('encryptFile')) {
+                console.error(`\\n  💡 HINT: encryptFile() failed - likely file content issue`);
+                console.error(`     Try: iconv -f utf-8 -t utf-8 -c ${filePath}`);
+            }
+            
+            throw sdkError;
         }
         
-        // STEP 6: Validate response
-        console.error(`DEBUG 6: Validating response`);
-        console.error(`DEBUG 6.1: Response type: ${typeof response}`);
-        console.error(`DEBUG 6.2: Response: ${JSON.stringify(response)}`);
+        // ===== RESPONSE VALIDATION =====
+        console.error(`\\n[VALIDATION] Checking response structure...`);
+        console.error(`  ✓ Response type: ${typeof response}`);
         
         if (!response) {
-            throw new Error(`Response is null or undefined`);
+            throw new Error(`Response is null/undefined`);
         }
-        console.error(`DEBUG 6.3: Response exists ✓`);
         
         if (!response.data) {
-            throw new Error(`Response.data is missing: ${JSON.stringify(response)}`);
+            throw new Error(`Response.data missing: ${JSON.stringify(response)}`);
         }
-        console.error(`DEBUG 6.4: Response.data exists ✓`);
+        console.error(`  ✓ response.data exists`);
         
-        if (!response.data.Hash) {
-            throw new Error(`Response.data.Hash is missing: ${JSON.stringify(response.data)}`);
+        if (!response.data.Hash && !response.data[0]?.Hash) {
+            throw new Error(`No CID in response: ${JSON.stringify(response.data)}`);
         }
-        console.error(`DEBUG 6.5: Response.data.Hash exists: ${response.data.Hash} ✓`);
         
-        // STEP 7: Return success
-        console.error(`DEBUG 7: Success! Returning CID`);
+        const cid = response.data.Hash || response.data[0].Hash;
+        const name = response.data.Name || response.data[0]?.Name || path.basename(filePath);
+        const size = response.data.Size || response.data[0]?.Size || stats.size.toString();
+        
+        console.error(`  ✓ CID: ${cid}`);
+        console.error(`  ✓ Name: ${name}`);
+        console.error(`  ✓ Size: ${size}`);
+        
+        console.error(`\\n========== UPLOAD SUCCESSFUL ==========\\n`);
+        
+        // Return result
         console.log(JSON.stringify({
-            cid: response.data.Hash,
-            name: response.data.Name || filePath.split('/').pop(),
-            size: response.data.Size || stats.size.toString()
+            cid: cid,
+            name: name,
+            size: size
         }));
         process.exit(0);
         
     } catch (error) {
-        console.error(`DEBUG ERROR: Caught exception in main try-catch`);
-        console.error(`DEBUG ERROR 1: Error type: ${error.constructor.name}`);
-        console.error(`DEBUG ERROR 2: Error message: ${error.message}`);
-        console.error(`DEBUG ERROR 3: Error stack: ${error.stack}`);
+        console.error(`\\n========== UPLOAD FAILED ==========`);
+        console.error(`❌ Fatal error: ${error.message}`);
+        console.error(`❌ Stack:\\n${error.stack}`);
         
         console.error(JSON.stringify({
             error: error.message || 'Unknown error',
@@ -263,6 +352,7 @@ async function uploadWithEncryption() {
 uploadWithEncryption();
 """
         
+        # Write script to temp file and execute
         with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
             f.write(script_content)
             script_path = f.name

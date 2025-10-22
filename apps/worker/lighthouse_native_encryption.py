@@ -316,9 +316,9 @@ async function uploadWithEncryption() {
             }
         };
         
-        // ===== NOW TRY ENCRYPTED UPLOAD =====
-        console.error(`\\n[UPLOAD] Now trying ENCRYPTED upload...`);
-        console.error(`  → text: ${fileContent.length} chars`);
+        // ===== NOW TRY ENCRYPTED UPLOAD (FILE-BASED, NOT TEXT) =====
+        console.error(`\\n[UPLOAD] Trying FILE-based uploadEncrypted() instead of text...`);
+        console.error(`  → filePath: ${filePath}`);
         console.error(`  → apiKey: ${apiKey.substring(0, 10)}...`);
         console.error(`  → publicKey: ${publicKey}`);
         console.error(`  → signedMessage: ${signedMessage.substring(0, 20)}...`);
@@ -327,8 +327,9 @@ async function uploadWithEncryption() {
         const startTime = Date.now();
         
         try {
-            response = await lighthouse.textUploadEncrypted(
-                fileContent,
+            // Use FILE-based upload instead of text
+            response = await lighthouse.uploadEncrypted(
+                filePath,      // Pass file path directly
                 apiKey,
                 publicKey,
                 signedMessage

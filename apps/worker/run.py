@@ -1069,7 +1069,19 @@ def update_preview_with_analytics(
             
             if (current_price and prev_price and prev_price > 0 and 
                 time_diff_seconds < 3600):  # Only compare swaps within 1 hour
-                delta_pct = ((current_price - prev_price) / prev_price) * 100.0
+                
+                # Check if prices are in the same direction (same swap direction)
+                # If ratio > 100 or < 0.01, they are opposite directions (e.g., USDC→WETH vs WETH→USDC)
+                price_ratio = current_price / prev_price
+                
+                if price_ratio > 100 or price_ratio < 0.01:
+                    # Opposite directions detected - invert current price to match prev direction
+                    inverted_current = 1.0 / current_price
+                    delta_pct = ((inverted_current - prev_price) / prev_price) * 100.0
+                else:
+                    # Same direction - compare directly
+                    delta_pct = ((current_price - prev_price) / prev_price) * 100.0
+                
                 # Sanity check: reject absurd swings (>500%)
                 if abs(delta_pct) < 500:
                     current_row["delta_vs_prev_row"] = round(delta_pct, 3)

@@ -81,13 +81,16 @@ class RollingPriceBuffer:
         """
         Add a price to the pool's rolling buffer.
         
-        CRITICAL: Rejects prices that are >100x different from existing buffer
-        to prevent mixing swap directions (e.g., USDC→WETH vs WETH→USDC).
+        CRITICAL: Auto-inverts prices to maintain consistent direction.
+        If new price is >100x different from buffer median, invert it to match.
+        This handles both USDC→WETH and WETH→USDC in same pool.
         """
         if pool_id not in self.buffers:
             self.buffers[pool_id] = []
         
-        # CRITICAL FIX: Check if new price is compatible with existing prices
+        price_to_add = normalized_price
+        
+        # CRITICAL FIX: Auto-invert incompatible prices instead of rejecting
         if len(self.buffers[pool_id]) >= 2:
             existing_prices = [e["price"] for e in self.buffers[pool_id][-5:]]
             sorted_prices = sorted(existing_prices)
@@ -96,13 +99,13 @@ class RollingPriceBuffer:
             
             if median_price > 0:
                 price_ratio = normalized_price / median_price
-                # Reject if new price is >100x different (different swap direction)
-                if not (0.01 < price_ratio < 100):
-                    logger.debug(f"Rejecting incompatible price {normalized_price:.6f} for pool {pool_id[:8]}... (median={median_price:.6f}, ratio={price_ratio:.1f}x)")
-                    return
+                # If >100x different, they're opposite directions - invert the new price
+                if price_ratio > 100 or price_ratio < 0.01:
+                    price_to_add = 1.0 / normalized_price
+                    logger.debug(f"Inverted price {normalized_price:.6f} → {price_to_add:.6f} for pool {pool_id[:8]}... (median={median_price:.6f})")
         
         self.buffers[pool_id].append({
-            "price": normalized_price,
+            "price": price_to_add,
             "timestamp": timestamp
         })
         

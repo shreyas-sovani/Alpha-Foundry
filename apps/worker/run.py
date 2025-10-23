@@ -157,19 +157,21 @@ def enrich_row_with_analytics(
     normalized_price = row.get("normalized_price")
     tx_hash = row.get("tx_hash", "")
     
-    if normalized_price and pool_id:
+    if normalized_price and normalized_price > 0 and pool_id:
         ma5 = price_buffer.get_moving_average(pool_id, window=5)
-        if ma5 > 0:
+        # Only compute delta if we have valid moving average (at least 3 data points recommended)
+        if ma5 > 0 and abs(ma5 - normalized_price) / ma5 < 100:  # Sanity check: reject >10000% swings
             delta_vs_ma = ((normalized_price - ma5) / ma5) * 100.0
             enriched["delta_vs_ma"] = round(delta_vs_ma, 2)
             
-            # MEV warning: flag swaps >2 stddev from average
-            if abs(delta_vs_ma) > 10.0:  # Simplified: >10% deviation
+            # MEV warning: flag swaps >10% deviation from MA
+            if abs(delta_vs_ma) > 10.0:
                 enriched["mev_warning"] = f"⚠️  Price {abs(delta_vs_ma):.1f}% from MA"
         else:
-            enriched["delta_vs_ma"] = 0.0
+            # Not enough price history or unrealistic swing - don't show delta
+            enriched["delta_vs_ma"] = None
     else:
-        enriched["delta_vs_ma"] = 0.0
+        enriched["delta_vs_ma"] = None
     
     # Gas context (placeholder for now)
     gas_context = compute_gas_context(row, client)
@@ -1033,13 +1035,35 @@ def update_preview_with_analytics(
             enriched_rows.append(enriched)
         
         # Compute delta_vs_prev_row for sequential price changes
+        # NOTE: enriched_rows is sorted DESC (newest first), so we compare chronologically
+        # by comparing current row (newer) with next row (older in time)
         for i in range(len(enriched_rows) - 1):
-            current_price = enriched_rows[i].get("normalized_price")
-            prev_price = enriched_rows[i + 1].get("normalized_price")
+            current_row = enriched_rows[i]
+            prev_row = enriched_rows[i + 1]
             
-            if current_price and prev_price and prev_price > 0:
+            # Only compare prices from the SAME pool
+            if current_row.get("pool_id") != prev_row.get("pool_id"):
+                current_row["delta_vs_prev_row"] = None
+                continue
+            
+            current_price = current_row.get("normalized_price")
+            prev_price = prev_row.get("normalized_price")
+            
+            # Sanity checks: valid prices and reasonable time proximity
+            current_ts = current_row.get("timestamp", 0)
+            prev_ts = prev_row.get("timestamp", 0)
+            time_diff_seconds = abs(current_ts - prev_ts)
+            
+            if (current_price and prev_price and prev_price > 0 and 
+                time_diff_seconds < 3600):  # Only compare swaps within 1 hour
                 delta_pct = ((current_price - prev_price) / prev_price) * 100.0
-                enriched_rows[i]["delta_vs_prev_row"] = round(delta_pct, 3)
+                # Sanity check: reject absurd swings (>500%)
+                if abs(delta_pct) < 500:
+                    current_row["delta_vs_prev_row"] = round(delta_pct, 3)
+                else:
+                    current_row["delta_vs_prev_row"] = None
+            else:
+                current_row["delta_vs_prev_row"] = None
         
         # Update preview state tracker
         preview_tx_hashes = [r.get("tx_hash", "") for r in enriched_rows]
@@ -1372,10 +1396,12 @@ async def run_cycle(
                         price_a = row_a.get("normalized_price")
                         price_b = row_b.get("normalized_price")
                         
-                        if price_a and price_b:
+                        if price_a and price_b and price_a > 0 and price_b > 0:
                             delta = compute_price_delta(price_a, price_b)
-                            row_a["delta_vs_other_pool"] = delta
-                            row_b["delta_vs_other_pool"] = -delta  # Inverse for pool B
+                            # Sanity check: reject absurd cross-pool spreads (>1000%)
+                            if abs(delta) < 1000:
+                                row_a["delta_vs_other_pool"] = round(delta, 2)
+                                row_b["delta_vs_other_pool"] = round(-delta, 2)  # Inverse for pool B
     
     # Update rolling price buffer with new rows
     for row in rows:

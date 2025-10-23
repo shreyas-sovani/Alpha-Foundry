@@ -92,7 +92,12 @@ class RollingPriceBuffer:
             self.buffers[pool_id] = self.buffers[pool_id][-self.max_size:]
     
     def get_moving_average(self, pool_id: str, window: int = 5) -> float:
-        """Compute moving average of last N prices."""
+        """
+        Compute moving average of last N prices.
+        
+        CRITICAL: Filters out prices that differ by >10x from median to handle
+        mixed swap directions (e.g., WETH→USDC vs USDC→WETH in same pool).
+        """
         if pool_id not in self.buffers or not self.buffers[pool_id]:
             return 0.0
         
@@ -101,6 +106,23 @@ class RollingPriceBuffer:
             return 0.0
         
         prices = [entry["price"] for entry in recent]
+        
+        # CRITICAL FIX: If prices vary widely (>10x), they're likely from
+        # different swap directions. Filter to only use prices in the same magnitude.
+        if len(prices) > 1:
+            # Calculate median price
+            sorted_prices = sorted(prices)
+            median_idx = len(sorted_prices) // 2
+            median_price = sorted_prices[median_idx]
+            
+            if median_price > 0:
+                # Filter: keep only prices within 10x of median
+                filtered = [p for p in prices if 0.1 < (p / median_price) < 10]
+                
+                if filtered:
+                    return sum(filtered) / len(filtered)
+        
+        # Fallback: simple average
         return sum(prices) / len(prices)
     
     def get_swaps_per_minute(self, pool_id: str, minutes: int = 5) -> float:
@@ -126,7 +148,12 @@ class RollingPriceBuffer:
         return (len(recent) / time_span) * 60.0
     
     def get_latest_price(self, pool_id: str, max_age_seconds: int = 600) -> float:
-        """Get most recent price if within max_age_seconds."""
+        """
+        Get most recent price if within max_age_seconds.
+        
+        CRITICAL: Returns 0 if latest price is an outlier (>10x different from
+        recent median), which indicates mixed swap directions in buffer.
+        """
         import time
         if pool_id not in self.buffers or not self.buffers[pool_id]:
             return 0.0
@@ -137,7 +164,23 @@ class RollingPriceBuffer:
         if now - latest["timestamp"] > max_age_seconds:
             return 0.0
         
-        return latest["price"]
+        latest_price = latest["price"]
+        
+        # CRITICAL FIX: Check if latest price is consistent with recent prices
+        # to avoid using prices from opposite swap direction
+        if len(self.buffers[pool_id]) >= 3:
+            recent_prices = [e["price"] for e in self.buffers[pool_id][-5:]]
+            sorted_prices = sorted(recent_prices)
+            median_idx = len(sorted_prices) // 2
+            median_price = sorted_prices[median_idx]
+            
+            if median_price > 0:
+                price_ratio = latest_price / median_price
+                # Reject if latest price is >10x different from median
+                if not (0.1 < price_ratio < 10):
+                    return 0.0
+        
+        return latest_price
     
     def prune_by_timestamp(self, cutoff_timestamp: int):
         """

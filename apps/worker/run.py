@@ -161,8 +161,15 @@ def enrich_row_with_analytics(
         ma5 = price_buffer.get_moving_average(pool_id, window=5)
         # Only compute delta if we have valid moving average
         if ma5 > 0:
+            # CRITICAL: Auto-invert price if incompatible with MA direction
+            # If MA is large (>1) and price is small (<0.1), or vice versa, invert price
+            price_to_compare = normalized_price
+            price_ratio = normalized_price / ma5
+            if price_ratio > 100 or price_ratio < 0.01:
+                price_to_compare = 1.0 / normalized_price
+            
             # Sanity check: reject if delta would be >1000% (likely bad data or inverted prices)
-            delta_vs_ma = ((normalized_price - ma5) / ma5) * 100.0
+            delta_vs_ma = ((price_to_compare - ma5) / ma5) * 100.0
             
             if abs(delta_vs_ma) < 1000:  # Reject >1000% swings
                 enriched["delta_vs_ma"] = round(delta_vs_ma, 2)

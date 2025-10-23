@@ -222,8 +222,7 @@ def compute_price_delta(price_a: float, price_b: float) -> float:
         Percentage delta: (price_a - price_b) / price_b * 100
         Returns 0.0 if either price is zero or calculation fails.
     
-    Note: This is a naive metric for MVP. Production should use
-    TWAP or other robust price oracles.
+    Note: Auto-inverts prices if they're >100x different (opposite swap directions).
     """
     try:
         if price_a <= 0 or price_b <= 0:
@@ -234,6 +233,12 @@ def compute_price_delta(price_a: float, price_b: float) -> float:
         
         if b == 0:
             return 0.0
+        
+        # CRITICAL: Auto-invert if prices are in opposite directions
+        ratio = abs(float(a / b))
+        if ratio > 100 or ratio < 0.01:
+            # Prices are inverted - flip one to match
+            a = Decimal("1") / a
         
         delta = (a - b) / b * Decimal("100")
         return float(delta)

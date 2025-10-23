@@ -78,9 +78,28 @@ class RollingPriceBuffer:
         self.max_size = max_size
     
     def add_price(self, pool_id: str, normalized_price: float, timestamp: int):
-        """Add a price to the pool's rolling buffer."""
+        """
+        Add a price to the pool's rolling buffer.
+        
+        CRITICAL: Rejects prices that are >100x different from existing buffer
+        to prevent mixing swap directions (e.g., USDC→WETH vs WETH→USDC).
+        """
         if pool_id not in self.buffers:
             self.buffers[pool_id] = []
+        
+        # CRITICAL FIX: Check if new price is compatible with existing prices
+        if len(self.buffers[pool_id]) >= 2:
+            existing_prices = [e["price"] for e in self.buffers[pool_id][-5:]]
+            sorted_prices = sorted(existing_prices)
+            median_idx = len(sorted_prices) // 2
+            median_price = sorted_prices[median_idx]
+            
+            if median_price > 0:
+                price_ratio = normalized_price / median_price
+                # Reject if new price is >100x different (different swap direction)
+                if not (0.01 < price_ratio < 100):
+                    logger.debug(f"Rejecting incompatible price {normalized_price:.6f} for pool {pool_id[:8]}... (median={median_price:.6f}, ratio={price_ratio:.1f}x)")
+                    return
         
         self.buffers[pool_id].append({
             "price": normalized_price,

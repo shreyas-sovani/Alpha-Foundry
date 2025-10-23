@@ -205,6 +205,34 @@ class RollingPriceBuffer:
         if pruned_count > 0:
             logger.debug(f"Pruned {pruned_count} price entries older than ts={cutoff_timestamp}")
     
+    def clean_mixed_directions(self) -> int:
+        """
+        Remove all prices from pools that have mixed swap directions (>100x variance).
+        
+        Returns:
+            Number of pools cleaned
+        """
+        cleaned_count = 0
+        
+        for pool_id, entries in list(self.buffers.items()):
+            if len(entries) < 2:
+                continue
+            
+            prices = [e["price"] for e in entries]
+            min_price = min(prices)
+            max_price = max(prices)
+            
+            # If max/min ratio > 100, we have mixed directions (e.g., 3880 / 0.00025 = 15,520,000)
+            if min_price > 0 and (max_price / min_price) > 100:
+                logger.info(f"Clearing pool {pool_id[:8]}... with mixed prices (min={min_price:.6f}, max={max_price:.2f})")
+                self.buffers[pool_id] = []
+                cleaned_count += 1
+        
+        # Remove empty pools
+        self.buffers = {k: v for k, v in self.buffers.items() if v}
+        
+        return cleaned_count
+    
     def save(self, path: str):
         """Persist rolling buffers to disk."""
         write_state(path, {"buffers": self.buffers})

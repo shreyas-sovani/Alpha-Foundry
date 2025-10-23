@@ -1740,6 +1740,13 @@ def main():
     price_buffer_path = Path(settings.LAST_BLOCK_STATE_PATH).parent / "price_buffer.json"
     price_buffer = RollingPriceBuffer.load(str(price_buffer_path), max_size=20)
     
+    # CRITICAL: Clean any corrupted price buffers with mixed swap directions
+    # This happens when buffer contains both USDC→WETH (~0.00025) and WETH→USDC (~3880)
+    cleaned_pools = price_buffer.clean_mixed_directions()
+    if cleaned_pools:
+        logger.warning(f"Cleaned {cleaned_pools} pools with mixed swap directions from price buffer")
+        price_buffer.save(str(price_buffer_path))
+    
     # Load preview state tracker
     preview_state_path = Path(settings.LAST_BLOCK_STATE_PATH).parent / "preview_state.json"
     preview_state = PreviewStateTracker.load(str(preview_state_path), max_size=10)

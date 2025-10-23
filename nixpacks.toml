@@ -7,7 +7,7 @@ nixPkgs = ["...", "nodejs"]
 [phases.install]
 cmds = [
   "...",
-  "cd apps/worker && npm install",
+  "npm install --prefix apps/worker",
   "echo 'Lighthouse SDK installed in apps/worker/node_modules/'"
 ]
 

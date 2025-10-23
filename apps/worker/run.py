@@ -159,16 +159,22 @@ def enrich_row_with_analytics(
     
     if normalized_price and normalized_price > 0 and pool_id:
         ma5 = price_buffer.get_moving_average(pool_id, window=5)
-        # Only compute delta if we have valid moving average (at least 3 data points recommended)
-        if ma5 > 0 and abs(ma5 - normalized_price) / ma5 < 100:  # Sanity check: reject >10000% swings
+        # Only compute delta if we have valid moving average
+        if ma5 > 0:
+            # Sanity check: reject if delta would be >1000% (likely bad data or inverted prices)
             delta_vs_ma = ((normalized_price - ma5) / ma5) * 100.0
-            enriched["delta_vs_ma"] = round(delta_vs_ma, 2)
             
-            # MEV warning: flag swaps >10% deviation from MA
-            if abs(delta_vs_ma) > 10.0:
-                enriched["mev_warning"] = f"⚠️  Price {abs(delta_vs_ma):.1f}% from MA"
+            if abs(delta_vs_ma) < 1000:  # Reject >1000% swings
+                enriched["delta_vs_ma"] = round(delta_vs_ma, 2)
+                
+                # MEV warning: flag swaps >10% deviation from MA
+                if abs(delta_vs_ma) > 10.0:
+                    enriched["mev_warning"] = f"⚠️  Price {abs(delta_vs_ma):.1f}% from MA"
+            else:
+                # Unrealistic swing - don't show delta
+                enriched["delta_vs_ma"] = None
         else:
-            # Not enough price history or unrealistic swing - don't show delta
+            # Not enough price history - don't show delta
             enriched["delta_vs_ma"] = None
     else:
         enriched["delta_vs_ma"] = None
@@ -1098,13 +1104,26 @@ def update_preview_with_analytics(
             price_b = price_buffer.get_latest_price(pool_addresses[1], max_age_seconds=600)
             
             if price_a > 0 and price_b > 0:
-                spread_percent = ((price_a - price_b) / price_b) * 100.0
-                spread_percent = round(spread_percent, 2)
+                # CRITICAL: Check if prices are in same direction (magnitude)
+                # If one price is >1 and other is <1, they're likely inverted (WETH/USDC vs USDC/WETH)
+                # Only compare if prices are within 2 orders of magnitude
+                price_ratio = max(price_a, price_b) / min(price_a, price_b)
                 
-                # ARB OPPORTUNITY ALERT (>0.5% spread is tradeable)
-                if abs(spread_percent) > 0.5:
-                    direction = "PoolA→PoolB" if spread_percent > 0 else "PoolB→PoolA"
-                    arb_alert = f"🎯 ARB OPPORTUNITY: {direction} +{abs(spread_percent):.2f}%"
+                if price_ratio < 100:  # Prices are comparable (within 100x)
+                    spread_percent = ((price_a - price_b) / price_b) * 100.0
+                    spread_percent = round(spread_percent, 2)
+                    
+                    # Sanity check: reject spreads >50% (likely bad data)
+                    if abs(spread_percent) > 50:
+                        spread_reason = "spread too large (>50%), likely bad data"
+                        spread_percent = None
+                    elif abs(spread_percent) > 0.5:
+                        # ARB OPPORTUNITY ALERT (>0.5% spread is tradeable)
+                        direction = "PoolA→PoolB" if spread_percent > 0 else "PoolB→PoolA"
+                        arb_alert = f"🎯 ARB OPPORTUNITY: {direction} +{abs(spread_percent):.2f}%"
+                else:
+                    # Prices are inverted or incomparable
+                    spread_reason = f"prices incomparable (ratio {price_ratio:.1f}x, likely different directions)"
             elif price_a == 0 and price_b == 0:
                 spread_reason = "no recent prices for either pool"
             elif price_a == 0:
@@ -1131,9 +1150,14 @@ def update_preview_with_analytics(
         if len(enriched_rows) >= 2:
             first_price = enriched_rows[0].get("normalized_price")
             last_price = enriched_rows[-1].get("normalized_price")
-            if first_price and last_price and last_price > 0:
+            first_pool = enriched_rows[0].get("pool_id")
+            last_pool = enriched_rows[-1].get("pool_id")
+            
+            # CRITICAL: Only compare prices from the SAME POOL
+            if first_price and last_price and last_price > 0 and first_pool == last_pool:
                 trend_pct = ((first_price - last_price) / last_price) * 100.0
-                if abs(trend_pct) > 1.0:
+                # Sanity check: reject trends >200% (unrealistic for short window)
+                if abs(trend_pct) > 1.0 and abs(trend_pct) < 200:
                     price_trend = f"{'📈' if trend_pct > 0 else '📉'} {trend_pct:+.2f}%"
         
         # Build header with RICH metrics

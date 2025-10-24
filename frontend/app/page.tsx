@@ -585,91 +585,119 @@ export default function UnlockPage() {
       {/* Animated Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-20 left-10 w-72 h-72 bg-blue-500/10 rounded-full blur-3xl animate-float"></div>
-        <div className="absolute top-40 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-float" style={{animationDelay: '2s'}}></div>
-        <div className="absolute bottom-20 left-1/2 w-80 h-80 bg-pink-500/10 rounded-full blur-3xl animate-float" style={{animationDelay: '4s'}}></div>
+        <div className="absolute top-40 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-float" style={{animationDelay: '2s', animationDuration: '8s'}}></div>
+        <div className="absolute bottom-20 left-1/2 w-80 h-80 bg-pink-500/10 rounded-full blur-3xl animate-float" style={{animationDelay: '4s', animationDuration: '10s'}}></div>
       </div>
 
-      <div className="container mx-auto px-4 py-12 max-w-7xl relative z-10">
-        {/* Hero Header */}
-        <div className="text-center mb-16 space-y-6">
-          {/* ETHOnline Badge */}
-          <div className="flex justify-center mb-6">
-            <div className="inline-flex items-center gap-2 glass px-6 py-3 rounded-full">
-              <span className="text-2xl animate-glow">🏆</span>
-              <span className="text-sm font-semibold text-blue-300">ETHOnline 2025 Finalist</span>
+      <div className="container mx-auto px-4 py-8 max-w-7xl relative z-10">
+        {/* Hero Header - Redesigned with Logo */}
+        <div className="mb-12">
+          {/* Top Bar - Logo + ETHOnline Badge (F-pattern: top-left anchor) */}
+          <div className="flex items-center justify-between mb-12 animate-slide-up">
+            {/* Left: Logo (Primary focal point) */}
+            <div className="flex items-center gap-4 group cursor-pointer">
+              <div className="relative">
+                {/* Glow ring */}
+                <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-blue-500/40 via-purple-500/40 to-pink-500/40 opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-xl"></div>
+                
+                <img 
+                  src="/logo.png" 
+                  alt="Alpha Foundry Logo" 
+                  className="h-16 md:h-20 lg:h-24 w-auto drop-shadow-2xl relative z-10 transition-all duration-300 group-hover:scale-110 group-hover:drop-shadow-[0_0_30px_rgba(59,130,246,0.6)]"
+                />
+              </div>
+              <div>
+                <h1 className="text-3xl md:text-4xl lg:text-5xl font-heading font-bold gradient-text leading-tight">
+                  Alpha Foundry
+                </h1>
+                <p className="text-sm md:text-base text-gray-400 mt-1">Decentralized Data Intelligence</p>
+              </div>
+            </div>
+
+            {/* Right: ETHOnline Badge */}
+            <div className="inline-flex items-center gap-2 glass px-4 md:px-6 py-2 md:py-3 rounded-full border border-yellow-500/30 shimmer hover:border-yellow-400/50 transition-all duration-300 hover:scale-105">
+              <span className="text-xl md:text-2xl animate-glow">🏆</span>
+              <span className="text-xs md:text-sm font-semibold bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent hidden sm:block">ETHOnline 2025</span>
             </div>
           </div>
 
-          {/* Main Title */}
-          <h1 className="text-6xl md:text-7xl font-heading font-bold mb-6 gradient-text leading-tight">
-            Alpha Foundry
-          </h1>
-          
-          <p className="text-2xl md:text-3xl text-gray-300 font-light mb-4">
-            Encrypted DEX Intelligence Platform
-          </p>
-          
-          <p className="text-lg text-gray-400 max-w-3xl mx-auto leading-relaxed">
-            Real-time arbitrage opportunities secured by threshold cryptography. 
-            Token-gated access to premium market data using decentralized encryption.
-          </p>
+          {/* Hero Content - Center aligned (Z-pattern: diagonal flow) */}
+          <div className="text-center mb-10 space-y-6 animate-scale-in">
+            <h2 className="text-3xl md:text-5xl lg:text-6xl font-heading font-bold text-white leading-tight">
+              Encrypted DEX Intelligence Platform
+            </h2>
+            
+            <p className="text-lg md:text-xl lg:text-2xl text-gray-300 max-w-4xl mx-auto leading-relaxed">
+              Real-time arbitrage opportunities secured by threshold cryptography. 
+              Token-gated access to premium market data using decentralized encryption.
+            </p>
 
-          {/* Tech Stack Badges */}
-          <div className="flex flex-wrap justify-center gap-3 mt-8">
-            <span className="tech-badge">
-              <span className="text-blue-400">⚡</span> Lighthouse Storage
-            </span>
-            <span className="tech-badge">
-              <span className="text-purple-400">🔍</span> Blockscout MCP
-            </span>
-            <span className="tech-badge">
-              <span className="text-pink-400">💎</span> 1MB.io DataCoin
-            </span>
-            <span className="tech-badge">
-              <span className="text-green-400">🤖</span> ASI:One Ready
-            </span>
+            {/* Tech Stack Badges with DADC Logo */}
+            <div className="flex flex-wrap justify-center gap-3 mt-8">
+              <span className="tech-badge animate-slide-up stagger-item">
+                <span className="text-blue-400">⚡</span> Lighthouse Storage
+              </span>
+              <span className="tech-badge animate-slide-up stagger-item">
+                <span className="text-purple-400">🔍</span> Blockscout MCP
+              </span>
+              <span className="tech-badge flex items-center gap-2 animate-slide-up stagger-item">
+                <img src="/dexarb_image.png" alt="DADC" className="w-5 h-5 rounded-full animate-rotate-slow" />
+                <span className="text-pink-400">💎</span> 1MB.io DataCoin
+              </span>
+              <span className="tech-badge animate-slide-up stagger-item">
+                <span className="text-green-400">🤖</span> ASI:One Ready
+              </span>
+            </div>
           </div>
 
-          {/* Quick Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-3xl mx-auto mt-12">
-            <div className="card-highlight text-center">
-              <div className="text-3xl font-bold gradient-text">{metadata?.rows?.toLocaleString() || '---'}</div>
-              <div className="text-sm text-gray-400 mt-1">Swap Events Tracked</div>
+          {/* Quick Stats - Visual hierarchy (F-pattern: horizontal scan) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto mt-12">
+            <div className="card-highlight text-center group hover:scale-105 transition-transform duration-300 animate-slide-in-left stagger-item">
+              <div className="text-4xl md:text-5xl font-bold gradient-text mb-2 group-hover:animate-pulse-glow">
+                {metadata?.rows?.toLocaleString() || '---'}
+              </div>
+              <div className="text-sm md:text-base text-gray-400 uppercase tracking-wide">Swap Events Tracked</div>
             </div>
-            <div className="card-highlight text-center">
-              <div className="text-3xl font-bold gradient-text">100%</div>
-              <div className="text-sm text-gray-400 mt-1">Encryption Coverage</div>
+            <div className="card-highlight text-center group hover:scale-105 transition-transform duration-300 animate-scale-in stagger-item">
+              <div className="text-4xl md:text-5xl font-bold gradient-text mb-2 group-hover:animate-pulse-glow">100%</div>
+              <div className="text-sm md:text-base text-gray-400 uppercase tracking-wide">Encryption Coverage</div>
             </div>
-            <div className="card-highlight text-center">
-              <div className="text-3xl font-bold gradient-text">{metadata?.freshness_minutes !== undefined ? `${metadata.freshness_minutes}m` : '---'}</div>
-              <div className="text-sm text-gray-400 mt-1">Data Freshness</div>
+            <div className="card-highlight text-center group hover:scale-105 transition-transform duration-300 animate-slide-in-right stagger-item">
+              <div className="text-4xl md:text-5xl font-bold gradient-text mb-2 group-hover:animate-pulse-glow">
+                {metadata?.freshness_minutes !== undefined ? `${metadata.freshness_minutes}m` : '---'}
+              </div>
+              <div className="text-sm md:text-base text-gray-400 uppercase tracking-wide">Data Freshness</div>
             </div>
           </div>
         </div>
         
         {/* Network/Wallet Status Card */}
-        <div className="card-highlight mb-8">
+        <div className="card-highlight mb-8 animate-slide-up">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-3xl font-heading font-bold flex items-center gap-3">
-              <span className="text-4xl">🔐</span>
-              Wallet Connection
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-3xl font-heading font-bold flex items-center gap-3">
+                <span className="text-4xl animate-bounce-gentle">🔐</span>
+                Wallet Connection
+              </h2>
+            </div>
             {!walletState.address ? (
               <button
                 onClick={connectWallet}
                 disabled={isConnecting}
-                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed group"
               >
-                {isConnecting ? (
-                  <><span className="animate-spin mr-2">⏳</span> Connecting...</>
-                ) : (
-                  <><span className="mr-2">🔌</span> Connect MetaMask</>
-                )}
+                <span className="relative z-10">
+                  {isConnecting ? (
+                    <><span className="animate-spin inline-block mr-2">⏳</span> Connecting...</>
+                  ) : (
+                    <><span className="mr-2 group-hover:animate-bounce-gentle inline-block">🔌</span> Connect MetaMask</>
+                  )}
+                </span>
               </button>
             ) : (
-              <div className="text-right">
+              <div className="text-right animate-slide-in-right">
                 <div className="text-xs text-gray-400 mb-1">Connected Wallet</div>
-                <div className="font-mono text-sm bg-white/5 px-3 py-1.5 rounded-lg">
+                <div className="font-mono text-sm bg-white/5 px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all duration-300">
                   {walletState.address.slice(0, 6)}...{walletState.address.slice(-4)}
                 </div>
               </div>
@@ -678,48 +706,57 @@ export default function UnlockPage() {
           
           {walletState.address && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="stat-card">
+              <div className="stat-card animate-slide-in-left">
                 <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Network</div>
                 <div className="font-semibold">
                   {walletState.chainId === CHAIN_ID ? (
-                    <span className="status-badge status-success">
+                    <span className="status-badge status-success animate-scale-in">
                       <span className="text-lg">✓</span> {CHAIN_NAME}
                     </span>
                   ) : (
-                    <span className="status-badge status-error">
-                      <span className="text-lg">✗</span> Wrong Network
+                    <span className="status-badge status-error animate-scale-in">
+                      <span className="text-lg animate-bounce-gentle">✗</span> Wrong Network
                     </span>
                   )}
                 </div>
               </div>
               
-              <div className="stat-card">
-                <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">DADC Balance</div>
-                <div className="font-semibold">
-                  {walletState.balance ? (
-                    <div>
-                      <div className="text-2xl font-bold text-blue-300">
-                        {parseFloat(walletState.balance).toFixed(2)}
+              <div className="stat-card relative overflow-hidden animate-scale-in">
+                {/* DADC Logo Background */}
+                <div className="absolute top-0 right-0 opacity-5">
+                  <img src="/dexarb_image.png" alt="" className="w-24 h-24 animate-rotate-slow" />
+                </div>
+                <div className="relative z-10">
+                  <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide flex items-center gap-2">
+                    <img src="/dexarb_image.png" alt="DADC" className="w-4 h-4 rounded-full" />
+                    DADC Balance
+                  </div>
+                  <div className="font-semibold">
+                    {walletState.balance ? (
+                      <div className="animate-slide-up">
+                        <div className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                          {parseFloat(walletState.balance).toFixed(2)}
+                        </div>
+                        <div className="text-xs text-gray-400 mt-1">
+                          {Math.floor(parseFloat(walletState.balance))} decrypt{Math.floor(parseFloat(walletState.balance)) === 1 ? '' : 's'} remaining
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        {Math.floor(parseFloat(walletState.balance))} decrypt{Math.floor(parseFloat(walletState.balance)) === 1 ? '' : 's'} remaining
-                      </div>
-                    </div>
-                  ) : (
-                    <span className="text-gray-500 animate-pulse">Loading...</span>
-                  )}
+                    ) : (
+                      <span className="text-gray-500 animate-pulse">Loading...</span>
+                    )}
+                  </div>
                 </div>
               </div>
               
-              <div className="stat-card">
+              <div className="stat-card animate-slide-in-right">
                 <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Access Status</div>
                 <div className="font-semibold">
                   {walletState.isEligible ? (
-                    <span className="status-badge status-success">
-                      <span className="text-lg">✓</span> Access Granted
+                    <span className="status-badge status-success animate-scale-in">
+                      <span className="text-lg animate-glow">✓</span> Access Granted
                     </span>
                   ) : (
-                    <span className="status-badge status-warning">
+                    <span className="status-badge status-warning animate-scale-in">
                       <span className="text-lg">⚠</span> Needs Tokens
                     </span>
                   )}
@@ -746,15 +783,25 @@ export default function UnlockPage() {
         {/* Claim Tokens Section */}
         {walletState.address && !walletState.isEligible && walletState.chainId === CHAIN_ID && (
           <div className="card-highlight mb-8 relative overflow-hidden">
+            {/* DADC Logo Background */}
+            <div className="absolute top-0 right-0 w-48 h-48 opacity-5">
+              <img src="/dexarb_image.png" alt="" className="w-full h-full" />
+            </div>
             <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-blue-500/20 to-transparent rounded-full blur-2xl"></div>
             
             <div className="relative z-10">
-              <h2 className="text-3xl font-heading font-bold mb-4 flex items-center gap-3">
-                <span className="text-4xl">🎁</span>
-                Claim Access Tokens
-              </h2>
+              <div className="flex items-center gap-4 mb-4">
+                <img src="/dexarb_image.png" alt="DADC Token" className="w-16 h-16 rounded-full shadow-lg border-2 border-blue-400" />
+                <h2 className="text-3xl font-heading font-bold flex items-center gap-3">
+                  <span className="text-4xl">🎁</span>
+                  Claim Access Tokens
+                </h2>
+              </div>
               <p className="text-gray-300 mb-6 text-lg">
-                Each <strong className="text-blue-300">DADC token</strong> grants one data decrypt.
+                Each <strong className="text-blue-300 inline-flex items-center gap-1">
+                  <img src="/dexarb_image.png" alt="" className="w-5 h-5 rounded-full inline" />
+                  DADC token
+                </strong> grants one data decrypt.
                 {walletState.hasClaimed ? (
                   <span className="block mt-2 text-yellow-300">You've already claimed from this wallet.</span>
                 ) : (
@@ -1224,9 +1271,17 @@ export default function UnlockPage() {
         {/* Footer */}
         <div className="mt-16 text-center space-y-6">
           <div className="glass-strong rounded-2xl p-8">
-            <h3 className="text-2xl font-heading font-bold mb-4 gradient-text">
-              Alpha Foundry
-            </h3>
+            {/* Logo and Title */}
+            <div className="flex items-center justify-center gap-4 mb-4">
+              <img 
+                src="/logo.png" 
+                alt="Alpha Foundry" 
+                className="h-12 w-auto drop-shadow-lg"
+              />
+              <h3 className="text-2xl font-heading font-bold gradient-text">
+                Alpha Foundry
+              </h3>
+            </div>
             <p className="text-gray-300 mb-6 max-w-2xl mx-auto">
               Pioneering token-gated encryption for decentralized data markets.
               Built with cutting-edge Web3 technologies for ETHOnline 2025.
@@ -1245,9 +1300,10 @@ export default function UnlockPage() {
                 href={`https://sepolia.etherscan.io/address/${DATACOIN_ADDRESS}`}
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="tech-badge hover:scale-105 transition-transform"
+                className="tech-badge hover:scale-105 transition-transform flex items-center gap-2"
               >
-                <span className="mr-2">📜</span> Smart Contracts
+                <img src="/dexarb_image.png" alt="DADC" className="w-5 h-5 rounded-full" />
+                <span>DADC Contract</span>
               </a>
               <a 
                 href="https://lighthouse.storage" 
@@ -1267,11 +1323,15 @@ export default function UnlockPage() {
                 <span>•</span>
                 <span>🔍 Blockscout MCP</span>
                 <span>•</span>
-                <span>💎 1MB.io</span>
+                <span className="flex items-center gap-1">
+                  <img src="/dexarb_image.png" alt="" className="w-3 h-3 rounded-full" />
+                  1MB.io
+                </span>
                 <span>•</span>
                 <span>🤖 ASI:One</span>
               </div>
-              <div className="mt-4 text-gray-600">
+              <div className="mt-4 text-gray-600 flex items-center justify-center gap-2">
+                <img src="/logo.png" alt="" className="h-4 w-auto opacity-50" />
                 © 2025 Alpha Foundry • Decentralized Data Intelligence
               </div>
             </div>

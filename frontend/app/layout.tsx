@@ -1,13 +1,28 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import { Space_Grotesk, Inter } from 'next/font/google'
 import './globals.css'
 
-const inter = Inter({ subsets: ['latin'] })
+const spaceGrotesk = Space_Grotesk({ 
+  subsets: ['latin'],
+  variable: '--font-space-grotesk',
+  display: 'swap',
+})
+
+const inter = Inter({ 
+  subsets: ['latin'],
+  variable: '--font-inter',
+  display: 'swap',
+})
 
 export const metadata: Metadata = {
-  title: 'DEXArb Data Unlock | ETHOnline 2025',
-  description: 'Token-gated access to encrypted DEX arbitrage data. Connect wallet, claim DADC tokens, and decrypt real-time swap feeds from Lighthouse Storage.',
-  keywords: ['DEX', 'Arbitrage', 'MEV', 'Lighthouse', 'DataCoin', 'ETHOnline', 'Encrypted Data'],
+  title: 'Alpha Foundry | ETHOnline 2025',
+  description: 'Token-gated encrypted DEX intelligence platform. Real-time arbitrage data secured by Lighthouse, powered by Blockscout MCP, 1MB.io, and ASI:One.',
+  keywords: ['ETHOnline 2025', 'Lighthouse', 'Blockscout MCP', '1MB.io', 'ASI:One', 'DEX', 'Arbitrage', 'MEV', 'DataCoin', 'Encrypted Data', 'Token-Gating'],
+  openGraph: {
+    title: 'Alpha Foundry - Encrypted DEX Intelligence',
+    description: 'Token-gated access to real-time arbitrage opportunities. Built for ETHOnline 2025.',
+    type: 'website',
+  },
 }
 
 export default function RootLayout({
@@ -16,7 +31,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${spaceGrotesk.variable} ${inter.variable}`}>
       <body className={inter.className}>{children}</body>
     </html>
   )

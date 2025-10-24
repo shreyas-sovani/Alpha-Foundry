@@ -15,9 +15,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy Node.js package files and install GLOBALLY
-COPY apps/worker/package*.json /tmp/
-RUN cd /tmp && npm install -g @lighthouse-web3/sdk @lighthouse-web3/kavach ethers && rm -rf /tmp/*
+# Install Lighthouse SDK and dependencies globally
+RUN npm install -g @lighthouse-web3/sdk @lighthouse-web3/kavach ethers
 
 # Copy application code
 COPY . .

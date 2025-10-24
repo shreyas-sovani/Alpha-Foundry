@@ -1,11 +1,13 @@
 # Use Python 3.11 slim image
 FROM python:3.11-slim
 
-# Install Node.js for Lighthouse CLI
+# Install Node.js and essential tools
 RUN apt-get update && apt-get install -y \
     nodejs \
     npm \
     curl \
+    bash \
+    coreutils \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

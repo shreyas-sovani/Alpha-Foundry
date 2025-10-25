@@ -23,18 +23,13 @@ RUN npm install -g @lighthouse-web3/sdk @lighthouse-web3/kavach ethers
 # Copy application code
 COPY . .
 
-# Copy and set up entrypoint script
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
 # Set NODE_PATH so node can find globally installed modules
 ENV NODE_PATH=/usr/local/lib/node_modules
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Expose port
 EXPOSE 8787
 
-# Use entrypoint script instead of CMD
-ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
+# Use shell form to ensure proper shell environment
+CMD python apps/worker/run.py

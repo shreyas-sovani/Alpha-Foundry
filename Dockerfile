@@ -27,9 +27,10 @@ COPY . .
 ENV NODE_PATH=/usr/local/lib/node_modules
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Expose port
 EXPOSE 8787
 
-# Start command
-CMD ["python", "apps/worker/run.py"]
+# Start command - use absolute path to python
+CMD ["/usr/local/bin/python", "apps/worker/run.py"]
